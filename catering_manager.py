@@ -1,8 +1,6 @@
 import subprocess
 import sys
 from pathlib import Path
-import webbrowser
-import time
 
 def main():
     projektordner = Path(__file__).resolve().parent

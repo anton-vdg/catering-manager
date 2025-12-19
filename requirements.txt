@@ -1,2 +1,3 @@
 streamlit>=1.30
 reportlab>=4.0
+watchdogs>=2.0.1

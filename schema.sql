@@ -20,7 +20,10 @@ CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sku TEXT UNIQUE,
   name TEXT NOT NULL,
+
+  default_quantity REAL NOT NULL DEFAULT 1,
   default_unit TEXT DEFAULT 'Stk',
+
   default_vat_rate REAL NOT NULL DEFAULT 0.19,
   default_unit_price_cents INTEGER NOT NULL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1,

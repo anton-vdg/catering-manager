@@ -67,8 +67,9 @@ def upsert_customer(name: str, phone: str | None, address: str | None) -> int:
 def create_product(
     name: str,
     default_unit_price_cents: int,
-    default_vat_rate: float = 0.19,
-    default_unit: str = "Stk",
+    default_vat_rate: float,
+    default_unit: str,
+    default_quantity: float,
     sku: str | None = None,
 ) -> int:
     name = name.strip()
@@ -78,10 +79,17 @@ def create_product(
     with get_conn() as conn:
         cur = conn.execute(
             """
-            INSERT INTO products (sku, name, default_unit, default_vat_rate, default_unit_price_cents)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO products (sku, name, default_quantity, default_unit, default_vat_rate, default_unit_price_cents)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ((sku or "").strip() or None, name, default_unit.strip() or "Stk", float(default_vat_rate), int(default_unit_price_cents)),
+            (
+                (sku or "").strip() or None,
+                name,
+                float(default_quantity),
+                (default_unit or "Stk").strip() or "Stk",
+                float(default_vat_rate),
+                int(default_unit_price_cents),
+            ),
         )
         return int(cur.lastrowid)
         
@@ -92,21 +100,22 @@ def list_products(active_only: bool = True) -> list[dict]:
         if active_only:
             rows = conn.execute(
                 """
-                SELECT id, sku, name, default_unit, default_vat_rate, default_unit_price_cents, is_active
+                SELECT id, sku, name, default_quantity, default_unit,
+                       default_vat_rate, default_unit_price_cents, is_active
                 FROM products
                 WHERE is_active = 1
-                ORDER BY name COLLATE NOCASE ASC
+                ORDER BY name COLLATE NOCASE
                 """
             ).fetchall()
         else:
             rows = conn.execute(
                 """
-                SELECT id, sku, name, default_unit, default_vat_rate, default_unit_price_cents, is_active
+                SELECT id, sku, name, default_quantity, default_unit,
+                       default_vat_rate, default_unit_price_cents, is_active
                 FROM products
-                ORDER BY is_active DESC, name COLLATE NOCASE ASC
+                ORDER BY name COLLATE NOCASE
                 """
             ).fetchall()
-
         return [dict(r) for r in rows]
 
 
@@ -114,7 +123,8 @@ def get_product(product_id: int) -> dict:
     with get_conn() as conn:
         row = conn.execute(
             """
-            SELECT id, sku, name, default_unit, default_vat_rate, default_unit_price_cents, is_active
+            SELECT id, sku, name, default_quantity, default_unit,
+                   default_vat_rate, default_unit_price_cents, is_active
             FROM products
             WHERE id = ?
             """,
@@ -136,7 +146,6 @@ def set_product_active(product_id: int, is_active: bool) -> None:
 # ------------------------------------------------------------
 # Bestellung anlegen (Kopf + Positionen)
 # Positionen speichern immer Snapshot von Text/Preis/MwSt
-# Optional: product_id speichern, falls aus Produktliste gewählt.
 # ------------------------------------------------------------
 def create_order(
     customer_id: int | None,

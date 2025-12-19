@@ -128,16 +128,20 @@ with tab_bestellung:
 
     if "items" not in st.session_state:
         st.session_state["items"] = [{
+            "product_id": None,
             "description": "",
             "quantity": 1.0,
+            "unit": "Stk",
             "unit_price_eur": 0.0,
             "vat_rate": 0.19
         }]
 
     def position_hinzufuegen():
         st.session_state["items"].append({
+            "product_id": None,
             "description": "",
             "quantity": 1.0,
+            "unit": "Stk",
             "unit_price_eur": 0.0,
             "vat_rate": 0.19
         })
@@ -152,40 +156,93 @@ with tab_bestellung:
     with b2:
         st.button("Letzte Position entfernen", on_click=letzte_position_entfernen)
 
-    # -------- Positionseditor --------
+    produkte = db.list_products(active_only=True)
+    produkte_by_id = {p["id"]: p for p in produkte}
+
+    def produkt_text(p: dict) -> str:
+        return p["name"]
+
+    optionen = [None] + [p["id"] for p in produkte]
+
     for i, item in enumerate(st.session_state["items"]):
-        c_desc, c_qty, c_price, c_vat = st.columns([6, 2, 2, 2])
+        # Einheit als eigenes Feld anzeigen
+        c_prod, c_desc, c_qty, c_unit, c_price, c_vat = st.columns([3, 6, 2, 2, 3, 2])
+
+        try:
+            idx = optionen.index(item.get("product_id"))
+        except ValueError:
+            idx = 0
+
+        pid = c_prod.selectbox(
+            "Produkt",
+            options=optionen,
+            index=idx,
+            format_func=lambda x: "— (Freitext)" if x is None else produkt_text(produkte_by_id[x]),
+            key=f"prod_{i}",
+        )
+
+        # Produktwechsel: alles vorbelegen (Menge+Einheit+Preis+MwSt)
+        if pid != item.get("product_id"):
+            item["product_id"] = pid
+            if pid is not None:
+                p = produkte_by_id[pid]
+
+                item["description"] = p["name"]
+                st.session_state[f"desc_{i}"] = p["name"]
+
+                std_qty = float(p.get("default_quantity", 1.0))
+                item["quantity"] = std_qty
+                st.session_state[f"qty_{i}"] = std_qty
+
+                std_unit = (p.get("default_unit") or "Stk").strip() or "Stk"
+                item["unit"] = std_unit
+                st.session_state[f"unit_{i}"] = std_unit
+
+                item["unit_price_eur"] = float(p["default_unit_price_cents"]) / 100.0
+                st.session_state[f"price_{i}"] = item["unit_price_eur"]
+
+                item["vat_rate"] = float(p["default_vat_rate"])
 
         item["description"] = c_desc.text_input(
-            f"Beschreibung #{i + 1}",
-            value=item["description"],
-            key=f"desc_{i}"
+            "Beschreibung",
+            value=st.session_state.get(f"desc_{i}", item.get("description", "")),
+            key=f"desc_{i}",
         )
 
         item["quantity"] = c_qty.number_input(
-            f"Menge #{i + 1}",
-            value=float(item["quantity"]),
+            f"Menge #{i+1}",
+            value=float(st.session_state.get(f"qty_{i}", item.get("quantity", 1.0))),
             min_value=0.0,
             step=1.0,
-            key=f"qty_{i}"
+            key=f"qty_{i}",
+        )
+
+        item["unit"] = c_unit.text_input(
+            "Einheit",
+            value=st.session_state.get(f"unit_{i}", item.get("unit", "Stk")),
+            key=f"unit_{i}",
         )
 
         item["unit_price_eur"] = c_price.number_input(
-            f"Einzelpreis (EUR, brutto) #{i + 1}",
-            value=float(item["unit_price_eur"]),
+            f"Einzelpreis (EUR, brutto) #{i+1}",
+            value=float(st.session_state.get(f"price_{i}", item.get("unit_price_eur", 0.0))),
             min_value=0.0,
             step=0.5,
-            key=f"price_{i}"
+            key=f"price_{i}",
         )
 
         vat_values = [x[1] for x in MWST_OPTIONEN]
-        idx = vat_values.index(item["vat_rate"])
+        try:
+            vat_idx = vat_values.index(float(item.get("vat_rate", 0.19)))
+        except ValueError:
+            vat_idx = 0
+
         auswahl = c_vat.selectbox(
-            f"MwSt #{i + 1}",
+            f"MwSt #{i+1}",
             options=list(range(len(MWST_OPTIONEN))),
             format_func=lambda x: MWST_OPTIONEN[x][0],
-            index=idx,
-            key=f"vat_{i}"
+            index=vat_idx,
+            key=f"vat_{i}",
         )
         item["vat_rate"] = MWST_OPTIONEN[auswahl][1]
 
@@ -194,11 +251,12 @@ with tab_bestellung:
 
     gesamt_cent = 0
     for it in st.session_state["items"]:
-        if not it["description"].strip():
+        desc = (it.get("description") or "").strip()
+        if not desc:
             continue
-        gesamt_cent += int(round(
-            euro_zu_cent(it["unit_price_eur"]) * it["quantity"]
-        ))
+        preis_cent = euro_zu_cent(float(it.get("unit_price_eur", 0.0)))
+        menge = float(it.get("quantity", 0.0) or 0.0)
+        gesamt_cent += int(round(preis_cent * menge))
 
     gesamt_cent += euro_zu_cent(delivery_fee_eur)
     gesamt_cent -= euro_zu_cent(discount_eur)
@@ -221,13 +279,17 @@ with tab_bestellung:
 
             positionen = []
             for it in st.session_state["items"]:
-                if not it["description"].strip():
+                desc = (it.get("description") or "").strip()
+                if not desc:
                     continue
+
                 positionen.append({
-                    "description": it["description"],
-                    "quantity": it["quantity"],
-                    "unit_price_cents": euro_zu_cent(it["unit_price_eur"]),
-                    "vat_rate": it["vat_rate"]
+                    "product_id": it.get("product_id"),
+                    "description": desc,
+                    "quantity": float(it.get("quantity", 1.0)),
+                    "unit": (it.get("unit") or "Stk").strip() or "Stk",
+                    "unit_price_cents": euro_zu_cent(float(it.get("unit_price_eur", 0.0))),
+                    "vat_rate": float(it.get("vat_rate", 0.19)),
                 })
 
             if not positionen:
@@ -446,6 +508,7 @@ with tab_produkte:
         pname = st.text_input("Produktname")
         pprice = st.number_input("Standardpreis (EUR, brutto)", min_value=0.0, step=0.5, value=0.0)
     with col2:
+        pqty = st.number_input("Standardmenge", min_value=0.0, step=1.0, value=1.0)
         punit = st.text_input("Einheit (z.B. Stk, Portion, kg)", value="Stk")
         pvat = st.selectbox("Standard-MwSt", options=[0.19, 0.07], format_func=lambda x: f"{int(x*100)} %")
         psku = st.text_input("Artikelnummer (optional)")
@@ -456,6 +519,7 @@ with tab_produkte:
             default_unit_price_cents=int(round(pprice * 100)),
             default_vat_rate=float(pvat),
             default_unit=punit,
+            default_quantity=float(pqty),
             sku=psku or None,
         )
         st.success(f"Produkt angelegt (ID {pid})")
@@ -465,6 +529,7 @@ with tab_produkte:
     st.write("**Produkte**")
     for p in produkte:
         st.write(
-            f"- [{p['id']}] {p['name']} | {p['default_unit']} | {p['default_unit_price_cents']/100:.2f} € | MwSt {int(p['default_vat_rate']*100)}% | Aktiv: {bool(p['is_active'])}"
+            f"- [{p['id']}] {p['name']} | {p.get('default_quantity', 1)} {p['default_unit']} | "
+            f"{p['default_unit_price_cents']/100:.2f} € | MwSt {int(p['default_vat_rate']*100)}% | Aktiv: {bool(p['is_active'])}"
         )
 
