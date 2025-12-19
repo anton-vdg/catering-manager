@@ -23,19 +23,6 @@ Die Anwendung läuft **lokal** (keine Cloud, kein Internet nötig) auf Basis von
 
 ---
 
-## Projektstruktur
-
-partyservice-manager/
-├─ app.py 
-├─ db.py 
-├─ invoice_pdf.py 
-├─ schema.sql 
-├─ requirements.txt
-├─ partyservice.db (wird automatisch erzeugt, wenn nicht vorhanden)
-├─ README.md
-
----
-
 ## Voraussetzungen
 
 - Python **3.10 oder höher**
