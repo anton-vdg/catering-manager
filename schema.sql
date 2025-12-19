@@ -4,7 +4,6 @@ CREATE TABLE IF NOT EXISTS customers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   phone TEXT,
-  email TEXT,
   address TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
