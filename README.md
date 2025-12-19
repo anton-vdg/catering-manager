@@ -1,4 +1,4 @@
-# Partyservice Manager
+# Catering Manager
 
 Eine einfache, lokale Bestell- und Rechnungsverwaltung für einen Partyservice / Catering-Betrieb.  
 Bestellungen werden digital erfasst, gespeichert und können als PDF-Rechnung ausgegeben werden.
