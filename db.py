@@ -38,9 +38,8 @@ def init_db():
 # Kunden: anlegen oder aktualisieren
 # Logik: wenn Telefon vorhanden und existiert -> update, sonst insert
 # ------------------------------------------------------------
-def upsert_customer(name: str, phone: str | None, email: str | None, address: str | None) -> int:
+def upsert_customer(name: str, phone: str | None, address: str | None) -> int:
     phone_norm = (phone or "").strip() or None
-    email = (email or "").strip() or None
     address = (address or "").strip() or None
     name = (name or "").strip() or "Unbekannt"
 
@@ -49,16 +48,17 @@ def upsert_customer(name: str, phone: str | None, email: str | None, address: st
             row = conn.execute("SELECT id FROM customers WHERE phone = ?", (phone_norm,)).fetchone()
             if row:
                 conn.execute(
-                    "UPDATE customers SET name=?, email=?, address=? WHERE id=?",
-                    (name, email, address, row["id"]),
+                    "UPDATE customers SET name=?, address=? WHERE id=?",
+                    (name, address, row["id"]),
                 )
                 return int(row["id"])
 
         cur = conn.execute(
-            "INSERT INTO customers (name, phone, email, address) VALUES (?, ?, ?, ?)",
-            (name, phone_norm, email, address),
+            "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
+            (name, phone_norm, address),
         )
         return int(cur.lastrowid)
+
 
 
 # ------------------------------------------------------------
@@ -208,7 +208,7 @@ def list_orders_for_day(date_yyyy_mm_dd: str) -> list[dict]:
             """
             SELECT
               o.*,
-              c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email, c.address AS customer_address
+              c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address
             FROM orders o
             LEFT JOIN customers c ON c.id = o.customer_id
             WHERE o.event_date = ?
@@ -224,7 +224,7 @@ def get_order_with_customer(order_id: int) -> dict:
         row = conn.execute(
             """
             SELECT o.*,
-                   c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email, c.address AS customer_address
+                   c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address
             FROM orders o
             LEFT JOIN customers c ON c.id = o.customer_id
             WHERE o.id = ?
@@ -254,7 +254,7 @@ def get_order_items(order_id: int) -> list[dict]:
 # Status / Zahlung
 # ------------------------------------------------------------
 def update_status(order_id: int, new_status: str) -> None:
-    allowed = {"open", "in_progress", "ready", "delivered", "paid", "cancelled"}
+    allowed = {"open", "paid"}
     if new_status not in allowed:
         raise ValueError(f"Status muss einer von {sorted(allowed)} sein.")
 
@@ -269,20 +269,18 @@ def update_status(order_id: int, new_status: str) -> None:
         )
 
 
-def update_payment(order_id: int, payment_status: str, payment_method: str | None = None) -> None:
-    allowed = {"unpaid", "paid", "partial", "cancelled"}
-    if payment_status not in allowed:
-        raise ValueError(f"Zahlungsstatus muss einer von {sorted(allowed)} sein.")
-
+def set_payment_method(order_id: int, payment_method: str | None) -> None:
+    """Speichert die Zahlungsart (Bar/Karte/...) in der Bestellung."""
     with get_conn() as conn:
         conn.execute(
             """
             UPDATE orders
-            SET payment_status = ?, payment_method = ?, updated_at = datetime('now')
+            SET payment_method = ?, updated_at = datetime('now')
             WHERE id = ?
             """,
-            (payment_status, (payment_method or None), int(order_id)),
+            ((payment_method or None), int(order_id)),
         )
+
 
 
 # ------------------------------------------------------------
