@@ -1,9 +1,16 @@
-from pathlib import Path
 import sqlite3
 from datetime import date
+from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
-
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
 
 # Projektordner: Von hier aus finden wir Datenbank und Dateien zuverlässig.
 BASE_DIR = Path(__file__).parent
@@ -193,6 +200,20 @@ def day_view():
     )
 
 
+@app.route("/bestellungen/<int:order_id>/loeschen", methods=["POST"])
+def delete_order(order_id):
+    """Löscht einen Auftrag und alle zugehörigen Positionen."""
+    selected_date = request.form.get("date", date.today().isoformat())
+
+    with sqlite3.connect(BASE_DIR / "products.db") as connection:
+        # Erst die untergeordneten Positionen löschen, dann den Auftrag selbst.
+        connection.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
+        connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+
+    # Nach dem Löschen zurück zur selben Tagesansicht gehen.
+    return redirect(url_for("day_view", date=selected_date))
+
+
 @app.route("/order.js")
 def order_script():
     # JavaScript-Datei für die interaktive Bestellung ausliefern.
@@ -200,4 +221,5 @@ def order_script():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Für Geräte im selben WLAN erreichbar; Debug aus Sicherheitsgründen aus.
+    app.run(host="0.0.0.0", port=5001, debug=False)

@@ -44,6 +44,15 @@
               <p class="gesamtbetrag">
                 Gesamtbetrag: {{ '%.2f'|format(order['total_cents'] / 100) }} €
               </p>
+              <form
+                class="loeschformular"
+                method="post"
+                action="{{ url_for('delete_order', order_id=order['id']) }}"
+                onsubmit="return confirm('Diese Bestellung wirklich löschen?')"
+              >
+                <input type="hidden" name="date" value="{{ selected_date }}">
+                <button class="loeschbutton" type="submit">Bestellung löschen</button>
+              </form>
             </article>
           {% endfor %}
         </section>
