@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Produkte – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/home">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="#">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+      </nav>
+    </header>
+
+    <main>
+      <h2>Produkte</h2>
+
+      {% if products %}
+        <ul>
+          {% for product in products %}
+            <li>
+              {{ product['name'] }} –
+              {{ '%.2f'|format(product['price_cents'] / 100) }} € pro
+              {{ product['unit'] }}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>Es sind noch keine Produkte gespeichert.</p>
+      {% endif %}
+    </main>
+  </body>
+</html>

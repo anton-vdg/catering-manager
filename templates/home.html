@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="#">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+      </nav>
+    </header>
+
+    <main>
+      <h2>Neue Bestellung</h2>
+
+      <form id="order-form">
+        <label for="kundenname">Kundenname</label>
+        <input id="kundenname" name="kundenname" type="text" required>
+
+        <label for="adresse">Lieferadresse</label>
+        <textarea id="adresse" name="adresse" rows="1"></textarea>
+
+        <label for="datum">Datum</label>
+        <input id="datum" name="datum" type="date" required>
+
+        <label for="uhrzeit">Uhrzeit</label>
+        <input id="uhrzeit" name="uhrzeit" type="time" required>
+
+        <fieldset>
+          <legend>Art der Bestellung</legend>
+          <label><input name="art" type="radio" value="abholung" required> Abholung</label>
+          <label><input name="art" type="radio" value="lieferung"> Lieferung</label>
+        </fieldset>
+
+        <label for="produktsuche">Produkt suchen</label>
+        <input id="produktsuche" type="search" placeholder="Zum Beispiel: Belegtes Brötchen" autocomplete="off">
+        <div id="suchergebnisse" class="suchergebnisse"></div>
+
+        <section class="ausgewaehlte-produkte">
+          <h3>Bestellte Produkte</h3>
+          <div id="bestellpositionen">
+            <p>Noch kein Produkt ausgewählt.</p>
+          </div>
+          <p id="gesamtbetrag" class="gesamtbetrag">Gesamtbetrag: 0,00 €</p>
+        </section>
+
+        <button type="submit">Bestellung speichern</button>
+        <p id="speicherhinweis"></p>
+      </form>
+    </main>
+    <script src="/order.js"></script>
+  </body>
+</html>

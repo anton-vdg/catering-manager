@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Tagesansicht – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="#">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+      </nav>
+    </header>
+    
+    <main>
+      <h2>Tagesansicht</h2>
+      <form method="get" action="/tagesansicht">
+        <label for="date">Datum</label>
+        <input id="date" name="date" type="date" value="{{ selected_date }}">
+        <button type="submit">Anzeigen</button>
+      </form>
+
+      {% if orders %}
+        <section class="bestellungen">
+          {% for order in orders %}
+            <article class="bestellung">
+              <h3>{{ order['order_time'] }} Uhr · {{ order['customer_name'] }}</h3>
+              <p>
+                {{ 'Abholung' if order['fulfillment_type'] == 'abholung' else 'Lieferung' }}
+                {% if order['delivery_address'] %}· {{ order['delivery_address'] }}{% endif %}
+              </p>
+              <ul>
+                {% for item in order['items'] %}
+                  <li>
+                    {{ item['quantity'] }} × {{ item['name'] }}
+                    ({{ '%.2f'|format(item['unit_price_cents'] / 100) }} € pro {{ item['unit'] }})
+                  </li>
+                {% endfor %}
+              </ul>
+              <p class="gesamtbetrag">
+                Gesamtbetrag: {{ '%.2f'|format(order['total_cents'] / 100) }} €
+              </p>
+            </article>
+          {% endfor %}
+        </section>
+      {% else %}
+        <p>Für dieses Datum gibt es noch keine Bestellungen.</p>
+      {% endif %}
+    </main>
+  </body>
+</html>
