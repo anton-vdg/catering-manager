@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY,
   customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
   delivery_address TEXT,
   order_date TEXT NOT NULL,
   order_time TEXT NOT NULL,

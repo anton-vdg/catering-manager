@@ -12,10 +12,32 @@ from flask import (
     url_for,
 )
 
+from io import BytesIO
+from xml.sax.saxutils import escape
+
+from flask import abort, send_file
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import A5
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
 # Projektordner: Von hier aus finden wir Datenbank und Dateien zuverlässig.
 BASE_DIR = Path(__file__).parent
 # Die zentrale Flask-Anwendung / der lokale Webserver.
 app = Flask(__name__)
+FONT_DIR = BASE_DIR / "fonts"
+pdfmetrics.registerFont(TTFont("ComicSans", str(FONT_DIR / "Comic Sans MS.ttf")))
+pdfmetrics.registerFont(TTFont("ComicSans-Bold", str(FONT_DIR / "Comic Sans MS Bold.ttf")))
+# Damit <b>...</b> in Paragraphen die fette Variante nimmt.
+pdfmetrics.registerFontFamily(
+    "ComicSans",
+    normal="ComicSans", bold="ComicSans-Bold",
+    italic="ComicSans", boldItalic="ComicSans-Bold",
+)
 
 
 def get_products():
@@ -130,13 +152,14 @@ def order_api():
     data = request.get_json(silent=True) or {}
     customer_name = data.get("customer_name", "").strip()
     delivery_address = data.get("delivery_address", "").strip()
+    customer_phone = data.get("customer_phone", "").strip()
     order_date = data.get("order_date", "").strip()
     order_time = data.get("order_time", "").strip()
     fulfillment_type = data.get("fulfillment_type", "").strip()
     items = data.get("items", [])
 
     # Auch der Server prüft alle Pflichtdaten, nicht nur das HTML-Formular.
-    if not customer_name or not order_date or not order_time or not items:
+    if not customer_name or not customer_phone or not order_date or not order_time or not items:
         return jsonify({"error": "Bitte alle Pflichtfelder und mindestens ein Produkt angeben."}), 400
     if fulfillment_type not in {"abholung", "lieferung"}:
         return jsonify({"error": "Ungültige Art der Bestellung."}), 400
@@ -150,10 +173,10 @@ def order_api():
             cursor = connection.execute(
                 """
                 INSERT INTO orders
-                    (customer_name, delivery_address, order_date, order_time, fulfillment_type)
-                VALUES (?, ?, ?, ?, ?)
+                    (customer_name, delivery_address, customer_phone, order_date, order_time, fulfillment_type)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (customer_name, delivery_address, order_date, order_time, fulfillment_type),
+                (customer_name, delivery_address, customer_phone, order_date, order_time, fulfillment_type),
             )
             order_id = cursor.lastrowid
 
@@ -213,6 +236,100 @@ def delete_order(order_id):
     # Nach dem Löschen zurück zur selben Tagesansicht gehen.
     return redirect(url_for("day_view", date=selected_date))
 
+def get_order_details(order_id):
+    """Liest Auftrag, Positionen (mit Produktname) und Gesamtbetrag."""
+    with sqlite3.connect(BASE_DIR / "products.db") as connection:
+        connection.row_factory = sqlite3.Row
+
+        order = connection.execute(
+            "SELECT * FROM orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        if order is None:
+            return None, [], 0
+
+        items = connection.execute(
+            """
+            SELECT products.name AS product_name, products.unit,
+                   order_items.quantity, order_items.unit_price_cents
+            FROM order_items
+            JOIN products ON products.id = order_items.product_id
+            WHERE order_items.order_id = ?
+            """,
+            (order_id,),
+        ).fetchall()
+
+    total_cents = sum(i["quantity"] * i["unit_price_cents"] for i in items)
+    return order, items, total_cents
+
+
+WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag",
+            "Freitag", "Samstag", "Sonntag"]
+
+
+@app.route("/bestellungen/<int:order_id>/pdf")
+def order_pdf(order_id):
+    """Erzeugt ein A5-PDF mit allen Daten einer Bestellung."""
+    order, items, _total_cents = get_order_details(order_id)
+    if order is None:
+        abort(404)
+
+    day = date.fromisoformat(order["order_date"])
+    date_text = f"{WEEKDAYS[day.weekday()]}, {day.strftime('%d.%m.')}"
+    fulfillment = "Abholung" if order["fulfillment_type"] == "abholung" else "Lieferung"
+
+    base = ParagraphStyle("base", fontName="ComicSans", fontSize=14, leading=19)
+    center = ParagraphStyle("center", parent=base, fontName="ComicSans-Bold",
+                            fontSize=16, leading=20, alignment=TA_CENTER)
+    right = ParagraphStyle("right", parent=base, fontName="ComicSans-Bold",
+                           fontSize=16, leading=20, alignment=TA_RIGHT)
+    heading = ParagraphStyle("heading", parent=base, fontName="ComicSans-Bold",
+                             fontSize=12, leading=16, spaceBefore=14, spaceAfter=4)
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A5,
+        leftMargin=1 * cm, rightMargin=1 * cm, topMargin=1 * cm, bottomMargin=1 * cm,
+        title=f"Bestellung Nr. {order_id}",
+    )
+
+    # Kopfzeile: links leer, Mitte Tag und Datum, rechts Uhrzeit und Art.
+    # Die beiden äußeren Spalten sind gleich breit, damit das Datum mittig sitzt.
+    header = Table(
+        [[
+            "",
+            Paragraph(escape(date_text), center),
+            Paragraph(f"{escape(order['order_time'])} Uhr<br/>{fulfillment}", right),
+        ]],
+        colWidths=[3.9 * cm, 5 * cm, 3.9 * cm],
+    )
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+    ]))
+
+    story = [header, Spacer(1, 0.5 * cm),
+             Paragraph(f"<b>{escape(order['customer_name'])}</b>", base)]
+    if order["delivery_address"]:
+        story.append(Paragraph(escape(order["delivery_address"]), base))
+    if order["customer_phone"]:
+        story.append(Paragraph(escape(order["customer_phone"]), base))
+
+    story.append(Paragraph("Bestellung", heading))
+    for item in items:
+        story.append(Paragraph(
+            f"{item['quantity']} × {escape(item['product_name'])} ({escape(item['unit'])})",
+            base,
+        ))
+
+    doc.build(story)
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/pdf",
+                     download_name=f"Bestellung_{order_id}.pdf")
+
+
 
 @app.route("/order.js")
 def order_script():
@@ -220,6 +337,9 @@ def order_script():
     return send_from_directory(BASE_DIR, "order.js")
 
 
+# if __name__ == "__main__":
+#     # Für Geräte im selben WLAN erreichbar; Debug aus Sicherheitsgründen aus.
+#     app.run(host="0.0.0.0", port=5001, debug=False)
+
 if __name__ == "__main__":
-    # Für Geräte im selben WLAN erreichbar; Debug aus Sicherheitsgründen aus.
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    app.run(debug=True)

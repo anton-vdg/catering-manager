@@ -44,15 +44,22 @@
               <p class="gesamtbetrag">
                 Gesamtbetrag: {{ '%.2f'|format(order['total_cents'] / 100) }} €
               </p>
-              <form
-                class="loeschformular"
-                method="post"
-                action="{{ url_for('delete_order', order_id=order['id']) }}"
-                onsubmit="return confirm('Diese Bestellung wirklich löschen?')"
-              >
-                <input type="hidden" name="date" value="{{ selected_date }}">
-                <button class="loeschbutton" type="submit">Bestellung löschen</button>
-              </form>
+              <div class = "button-gruppe">
+                <form
+                  class="loeschformular"
+                  method="post"
+                  action="{{ url_for('delete_order', order_id=order['id']) }}"
+                  onsubmit="return confirm('Diese Bestellung wirklich löschen?')"
+                >
+                  <input type="hidden" name="date" value="{{ selected_date }}">
+                  <button class="loeschbutton" type="submit" title="Bestellung löschen">🗑️</button>
+                </form>
+                <form class="pdfformular" method="get" action="{{ url_for('order_pdf', order_id=order['id']) }}" target="_blank"
+                >
+                  <input type="hidden" name="date" value="{{ selected_date }}">
+                  <button class="pdfbutton" type="submit" title="Bestellung als PDF öffnen">📄</button>
+                </form>
+            </div>
             </article>
           {% endfor %}
         </section>

@@ -120,6 +120,7 @@ orderForm.addEventListener("submit", async (event) => {
   const orderData = {
     customer_name: document.querySelector("#kundenname").value.trim(),
     delivery_address: document.querySelector("#adresse").value.trim(),
+    customer_phone: document.querySelector("#telefon").value.trim(),
     order_date: document.querySelector("#datum").value,
     order_time: document.querySelector("#uhrzeit").value,
     fulfillment_type: selectedFulfillment ? selectedFulfillment.value : "",

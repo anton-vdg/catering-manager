@@ -94,6 +94,29 @@ button {
   display: block;
 }
 
+.pdfbutton,
+.loeschbutton {
+  width: 40px;          /* Feste Breite für Quadratform */
+  height: 40px;         /* Feste Höhe für Quadratform */
+  font-size: 1.2rem;    /* Macht das Symbol etwas größer */
+  padding: 0;           /* Entfernt das Standard-Padding */
+  display: inline-flex; /* Aktiviert Flexbox zum Zentrieren */
+  align-items: center;  /* Zentriert das Symbol vertikal */
+  justify-content: center; /* Zentriert das Symbol horizontal */
+  border-radius: 4px;   /* Optionale leicht abgerundete Ecken */
+}
+
+/* Farben bleiben wie gehabt */
+.pdfbutton {
+  background-color: #d97941;
+}
+
 .loeschbutton {
   background-color: #a81414;
+}
+
+.button-gruppe {
+  display: flex;
+  gap: 8px;          /* Abstand zwischen den Buttons */
+  margin-top: 12px;  /* Abstand zum Text darüber */
 }
