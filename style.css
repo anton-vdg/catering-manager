@@ -120,3 +120,27 @@ button {
   gap: 8px;          /* Abstand zwischen den Buttons */
   margin-top: 12px;  /* Abstand zum Text darüber */
 }
+
+/* Bearbeiten-Knopf soll wie die anderen aussehen, ist aber ein <a>. */
+.bearbeitenbutton {
+  width: 40px;
+  height: 40px;
+  font-size: 1.2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background-color: #d97941;
+  color: white;
+  text-decoration: none;
+}
+
+/* Der Abbrechen-Link neben "Speichern" */
+.abbrechen {
+  padding: 8px 16px;
+  background-color: #c9c9c0;
+  color: #26352d;
+  text-decoration: none;
+  border-radius: 4px;
+}

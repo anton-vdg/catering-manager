@@ -59,6 +59,14 @@ function showSearchResults(products) {
   }
 }
 
+const taxElement = document.querySelector("#mwst-betrag");
+
+function calculateTax(product) {
+  // MwSt. steckt im Bruttopreis: Steuer = brutto * satz / (100 + satz)
+  const gross = product.price_cents * product.quantity;
+  return Math.round((gross * product.tax_rate) / (100 + product.tax_rate));
+}
+
 function showOrderItems() {
   // Bestellliste aus dem aktuellen Zustand neu aufbauen.
   orderItems.replaceChildren();
@@ -69,11 +77,13 @@ function showOrderItems() {
 
   if (selectedProducts.size === 0) {
     orderItems.textContent = "Noch kein Produkt ausgewählt.";
-    totalElement.textContent = "Gesamtbetrag: 0,00 €";
+    updateSummary();
     return;
   }
 
   let totalCents = 0;
+  let totalTaxCents = 0;
+
   for (const product of selectedProducts.values()) {
     const row = document.createElement("div");
     row.className = "bestellposition";
@@ -85,10 +95,27 @@ function showOrderItems() {
     quantity.type = "number";
     quantity.min = "1";
     quantity.value = product.quantity;
+
+    // Klick ins Feld markiert den Inhalt, damit man ihn direkt überschreiben
+    // kann – statt erst "120" zu tippen und die führende 1 zu löschen.
+    quantity.addEventListener("focus", () => {
+      // setTimeout: der Klick, der den Fokus gesetzt hat, ist dann vorbei.
+      // Ohne das hebt der Browser die Auswahl gleich wieder auf.
+      setTimeout(() => quantity.select(), 0);
+    });
+
     quantity.addEventListener("input", () => {
-      // Mindestens ein Produkt bestellen und danach Summe neu berechnen.
-      product.quantity = Math.max(1, Number(quantity.value) || 1);
-      showOrderItems();
+      // Getippten Wert übernehmen. Leeres Feld ist erlaubt – es wird für die
+      // Zwischensumme als 0 gerechnet. Wichtig: kein showOrderItems() hier!
+      product.quantity = parseQuantity(quantity.value);
+      updateSummary();
+    });
+
+    quantity.addEventListener("change", () => {
+      // Feld verlassen oder Enter: jetzt auf einen gültigen Wert bringen.
+      product.quantity = Math.max(1, parseQuantity(quantity.value));
+      quantity.value = product.quantity;
+      updateSummary();
     });
 
     const removeButton = document.createElement("button");
@@ -101,15 +128,43 @@ function showOrderItems() {
 
     row.append(name, quantity, removeButton);
     orderItems.append(row);
-    // Preise bleiben bis zur Anzeige in ganzen Cent.
+
+    // Preise und MwSt. berechnen.
     totalCents += product.price_cents * product.quantity;
+    totalTaxCents += calculateTax(product);
   }
 
-  totalElement.textContent = `Gesamtbetrag: ${formatCents(totalCents)} €`;
+  updateSummary();
 }
 
 function formatCents(cents) {
   return (cents / 100).toFixed(2).replace(".", ",");
+}
+
+function parseQuantity(raw) {
+  // Liest den Feldinhalt als ganze Zahl. Leer oder ungültig -> 0.
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    return 0;
+  }
+  return Math.floor(n);
+}
+
+function updateSummary() {
+  // Berechnet nur Gesamtbetrag und MwSt. Die Liste wird NICHT angefasst.
+  // Dadurch bleibt der Cursor im Eingabefeld, wo er ist.
+  let totalCents = 0;
+  let totalTaxCents = 0;
+
+  for (const product of selectedProducts.values()) {
+    // quantity kann während des Tippens kurz 0 sein – dann zählt die
+    // Position in diesem Moment nichts.
+    totalCents += product.price_cents * product.quantity;
+    totalTaxCents += calculateTax(product);
+  }
+
+  totalElement.textContent = `Gesamtbetrag: ${formatCents(totalCents)} €`;
+  taxElement.textContent = `MwSt.: ${formatCents(totalTaxCents)} €`;
 }
 
 orderForm.addEventListener("submit", async (event) => {

@@ -9,7 +9,7 @@
     <header>
       <h1>Catering Manager</h1>
       <nav>
-        <a href="/home">Startseite</a>
+        <a href="/">Startseite</a>
         <a href="/tagesansicht">Tagesansicht</a>
         <a href="#">Wochenansicht</a>
         <a href="/produkte">Produkte</a>
@@ -17,67 +17,12 @@
     </header>
 
     <main>
-      <h2>Produkte</h2>
-
-      {# Jinja-Kommentar: wird im Browser nie angezeigt. #}
-      {# Rückmeldung nach dem Hinzufügen oder Löschen. #}
-      {% if hinweis %}
-        <p class="hinweis">{{ hinweis }}</p>
-      {% endif %}
-      {% if fehler %}
-        <p class="fehler">{{ fehler }}</p>
-      {% endif %}
-
-      {# Liste aller sichtbaren Produkte. #}
-      {% if products %}
-        <table>
-          <thead>
-            <tr>
-              <th>Produkt</th>
-              <th>Preis</th>
-              <th>Einheit</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {# Schleife: ein Tabellenblock pro Produkt. #}
-            {% for product in products %}
-              <tr>
-                <td>{{ product['name'] }}</td>
-                <td>{{ '%.2f'|format(product['price_cents'] / 100) }} €</td>
-                <td>pro {{ product['unit'] }}</td>
-                <td>
-                  {#
-                    Jede Zeile hat ihr eigenes Mini-Formular.
-                    Ein Formular kann nur eine Aktion senden, deshalb pro
-                    Produkt ein eigenes.
-                    method="post" ist Pflicht, weil wir Daten ändern –
-                    niemals per GET (Link) löschen.
-                  #}
-                  <form method="post"
-                        action="/produkte/{{ product['id'] }}/loeschen"
-                        onsubmit="return confirm('Dieses Produkt wirklich löschen?');">
-                    <button type="submit">Löschen</button>
-                  </form>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      {% else %}
-        <p>Es sind noch keine Produkte gespeichert.</p>
-      {% endif %}
-
-      <!-- Ein normaler HTML-Kommentar: erscheint in der Seitenquelle. -->
-      <h3>Produkt hinzufügen</h3>
-      <!--
-        action = wohin die Daten geschickt werden
-        method="post" = Daten werden im Hintergrund übertragen, nicht in der URL
-        required = Browser prüft, ob das Feld ausgefüllt ist
-      -->
+      <h2>Produkt hinzufügen</h2>
       <form method="post" action="/produkte/hinzufuegen">
+        {% if selected_category %}
+          <input type="hidden" name="kategorie" value="{{ selected_category }}">
+        {% endif %}
         <p>
-          <!-- for="name" verbindet die Beschriftung mit dem Feld id="name" -->
           <label for="name">Name</label><br>
           <input type="text" id="name" name="name" required>
         </p>
@@ -89,10 +34,112 @@
         </p>
         <p>
           <label for="unit">Einheit</label><br>
-          <input type="text" id="unit" name="unit" value="Stück">
+          <!-- datalist = Vorschlagsliste, man kann trotzdem frei tippen. -->
+          <input type="text" id="unit" name="unit" value="Stück" list="einheiten">
+          <datalist id="einheiten">
+            <option value="Stück"></option>
+            <option value="Kilo"></option>
+            <option value="Liter"></option>
+            <option value="Person"></option>
+            <option value="Stunde"></option>
+            <option value="qm"></option>
+            <option value="Glas"></option>
+          </datalist>
+        </p>
+        <p>
+          <label for="category_id">Kategorie</label><br>
+          <select id="category_id" name="category_id">
+            <option value="">– keine –</option>
+            {% for k in categories %}
+              <option value="{{ k['id'] }}">{{ k['name'] }}</option>
+            {% endfor %}
+          </select>
         </p>
         <button type="submit">Hinzufügen</button>
       </form>
+      <h3>Produkte</h3>
+
+      {% if hinweis %}<p class="hinweis">{{ hinweis }}</p>{% endif %}
+      {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
+
+      {#
+        Der Filter steht AUSSERHALB von {% if gruppen %}.
+        Sonst wäre er nicht mehr erreichbar, wenn eine Kategorie leer ist.
+      #}
+      <form method="get" action="/produkte" class="kategorie-filter">
+        <label for="kategorie">Kategorie</label>
+        <select id="kategorie" name="kategorie" onchange="this.form.submit()">
+          <option value="">Alle Kategorien</option>
+          {% for k in categories %}
+            {# 'selected' markiert die aktuell gewählte Zeile im Dropdown. #}
+            <option value="{{ k['id'] }}"
+                    {% if selected_category == k['id'] %}selected{% endif %}>
+              {{ k['name'] }}
+            </option>
+          {% endfor %}
+        </select>
+        {# Fallback, falls JavaScript aus ist: dann gibt es einen Knopf. #}
+        <noscript><button type="submit">Anzeigen</button></noscript>
+      </form>
+
+      {# 'gruppen' ist eine Liste: pro Kategorie ein Eintrag mit Name und Produkten. #}
+      {% if gruppen %}
+        {% for gruppe in gruppen %}
+          <h3>{{ gruppe['name'] }}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Produkt</th>
+                <th>Preis</th>
+                <th>Einheit</th>
+                <th>MwSt.</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for product in gruppe['produkte'] %}
+                <tr>
+                  <td>{{ product['name'] }}</td>
+                  <td>
+                    {% if product['price_cents'] == 0 %}
+                      auf Anfrage
+                    {% else %}
+                      {{ '%.2f'|format(product['price_cents'] / 100) }} €
+                    {% endif %}
+                  </td>
+                  <td>{% if product['price_cents'] != 0 %}pro {{ product['unit'] }}{% endif %}</td>
+                  <td>{{ product['tax_rate'] }} %</td>
+                  <td>
+                    <div class="button-gruppe">
+                      {# Bearbeiten ist ein Link, kein Formular: es werden keine Daten geändert. #}
+                      <a class="bearbeitenbutton"
+                         href="{{ url_for('produkt_bearbeiten',
+                                          product_id=product['id'],
+                                          kategorie=selected_category or None) }}">
+                        ✏️
+                      </a>
+                  
+                      <form method="post"
+                            action="/produkte/{{ product['id'] }}/loeschen"
+                            onsubmit="return confirm('Dieses Produkt wirklich löschen?');">
+                        {% if selected_category %}
+                          <input type="hidden" name="kategorie" value="{{ selected_category }}">
+                        {% endif %}
+                        <button type="submit" class="loeschbutton" title="Produkt löschen">🗑️</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endfor %}
+      {% elif selected_category %}
+        {# Filter aktiv, aber diese Kategorie hat keine sichtbaren Produkte. #}
+        <p>In dieser Kategorie sind keine Produkte vorhanden.</p>
+      {% else %}
+        <p>Es sind noch keine Produkte gespeichert.</p>
+      {% endif %}
     </main>
   </body>
 </html>

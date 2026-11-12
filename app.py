@@ -27,6 +27,41 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 # Projektordner: Von hier aus finden wir Datenbank und Dateien zuverlässig.
 BASE_DIR = Path(__file__).parent
+
+def init_db():
+    """Legt fehlende Tabellen an und spielt die Startdaten ein."""
+    db = sqlite3.connect(BASE_DIR / "products.db")
+    db.execute("PRAGMA foreign_keys = ON")
+
+    # 1. Kategorien sicherstellen – muss VOR category_id existieren.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    # 2. Alte products-Tabelle um fehlende Spalten ergänzen.
+    spalten = [z[1] for z in db.execute("PRAGMA table_info(products)")]
+    if spalten:  # Tabelle existiert schon
+        if "active" not in spalten:
+            db.execute("ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+        if "category_id" not in spalten:
+            db.execute("ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)")
+        if "tax_rate" not in spalten:
+            db.execute("ALTER TABLE products ADD COLUMN tax_rate INTEGER NOT NULL DEFAULT 19")
+
+    # 3. Struktur + Preisliste einspielen. Mehrfach ausführbar.
+    db.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
+    db.executescript((BASE_DIR / "produktliste.sql").read_text(encoding="utf-8"))
+
+    db.commit()
+    db.close()
+
+
+init_db()
+
 # Die zentrale Flask-Anwendung / der lokale Webserver.
 app = Flask(__name__)
 FONT_DIR = BASE_DIR / "fonts"
@@ -40,32 +75,42 @@ pdfmetrics.registerFontFamily(
 )
 
 
-def get_products():
-    """Liest alle Produkte aus der SQLite-Datenbank."""
-    # Verbindung zur Datenbank öffnen.
+def get_products(category_id=None):
+    """Liest sichtbare Produkte, optional nur die einer Kategorie."""
     connection = sqlite3.connect(BASE_DIR / "products.db")
-    # Zeilen per Spaltennamen lesbar machen, z. B. product["name"].
     connection.row_factory = sqlite3.Row
 
-    products = connection.execute(
-        "SELECT id, name, price_cents, unit FROM products ORDER BY name"
-    ).fetchall()
+    sql = """
+        SELECT p.id, p.name, p.price_cents, p.unit, p.tax_rate,
+               COALESCE(c.name, 'Ohne Kategorie') AS category_name,
+               COALESCE(c.sort_order, 9999)       AS category_sort
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.active = 1
+    """
+    params = []
 
+    # Nur wenn eine Kategorie gewählt wurde, kommt der Zusatz dazu.
+    if category_id is not None:
+        sql += " AND p.category_id = ?"
+        params.append(category_id)
+
+    sql += " ORDER BY COALESCE(c.sort_order, 9999), p.name"
+
+    products = connection.execute(sql, params).fetchall()
     connection.close()
     return products
 
 
 def search_products(search_term):
-    """Sucht Produkte, deren Name den Suchbegriff enthält."""
     connection = sqlite3.connect(BASE_DIR / "products.db")
     connection.row_factory = sqlite3.Row
 
-    # Das ? ist ein sicherer Platzhalter für den Suchbegriff.
     products = connection.execute(
         """
-        SELECT id, name, price_cents, unit
+        SELECT id, name, price_cents, unit, tax_rate
         FROM products
-        WHERE name LIKE ?
+        WHERE active = 1 AND name LIKE ?
         ORDER BY name
         """,
         (f"%{search_term}%",),
@@ -121,29 +166,224 @@ def stylesheet():
 
 @app.route("/produkte")
 def products():
-    return render_template("produkte.html", products=get_products())
+    # Auswahl aus der URL lesen: /produkte?kategorie=5
+    # Leer oder Unsinn -> None -> alle Kategorien anzeigen.
+    kategorie = request.args.get("kategorie", "").strip()
+    selected_category = int(kategorie) if kategorie.isdigit() else None
 
+    rows = get_products(selected_category)
+
+    # Flache Liste in Gruppen umbauen. Ist eine Kategorie gefiltert,
+    # entsteht hier eben nur eine einzige Gruppe.
+    gruppen = []
+    for row in rows:
+        if not gruppen or gruppen[-1]["name"] != row["category_name"]:
+            gruppen.append({"name": row["category_name"], "produkte": []})
+        gruppen[-1]["produkte"].append(dict(row))
+
+    connection = sqlite3.connect(BASE_DIR / "products.db")
+    connection.row_factory = sqlite3.Row
+    categories = connection.execute(
+        "SELECT id, name FROM categories ORDER BY sort_order, name"
+    ).fetchall()
+    connection.close()
+
+    return render_template(
+        "produkte.html",
+        gruppen=gruppen,
+        categories=categories,
+        selected_category=selected_category,
+        hinweis=request.args.get("hinweis"),
+        fehler=request.args.get("fehler"),
+    )
+
+@app.route("/produkte/hinzufuegen", methods=["POST"])
+def produkt_hinzufuegen():
+    name = request.form.get("name", "").strip()
+    unit = request.form.get("unit", "").strip() or "Stück"
+    preis_text = request.form.get("price", "").strip().replace(",", ".")
+    zurueck = request.form.get("kategorie", "").strip()   # NEU
+
+    category_id = request.form.get("category_id") or None
+    if category_id is not None:
+        category_id = int(category_id)
+
+    # Hilfsfunktion: baut die Rücksprung-URL mit oder ohne Kategorie.
+    def zurueck_url(**kwargs):
+        if zurueck:
+            kwargs["kategorie"] = zurueck
+        return redirect(url_for("products", **kwargs))
+
+    if not name:
+        return zurueck_url(fehler="Bitte einen Namen eingeben.")
+
+    try:
+        price_cents = round(float(preis_text) * 100)
+    except ValueError:
+        return zurueck_url(fehler="Bitte einen gültigen Preis eingeben, z. B. 4,50.")
+
+    if price_cents < 0:
+        return zurueck_url(fehler="Der Preis darf nicht negativ sein.")
+
+    connection = sqlite3.connect(BASE_DIR / "products.db")
+    schon_da = connection.execute(
+        "SELECT id FROM products WHERE active = 1 AND lower(name) = lower(?)", (name,)
+    ).fetchone()
+    if schon_da:
+        connection.close()
+        return zurueck_url(fehler=f"„{name}“ gibt es schon.")
+
+    connection.execute(
+        "INSERT INTO products (name, price_cents, unit, category_id) VALUES (?, ?, ?, ?)",
+        (name, price_cents, unit, category_id),
+    )
+    connection.commit()
+    connection.close()
+
+    return zurueck_url(hinweis=f"„{name}“ wurde hinzugefügt.")
+
+
+@app.route("/produkte/<int:product_id>/loeschen", methods=["POST"])
+def produkt_loeschen(product_id):
+    zurueck = request.form.get("kategorie", "").strip()   # NEU
+
+    def zurueck_url(**kwargs):
+        if zurueck:
+            kwargs["kategorie"] = zurueck
+        return redirect(url_for("products", **kwargs))
+
+    connection = sqlite3.connect(BASE_DIR / "products.db")
+    row = connection.execute(
+        "SELECT name FROM products WHERE id = ? AND active = 1", (product_id,)
+    ).fetchone()
+    if row is None:
+        connection.close()
+        return zurueck_url(fehler="Produkt nicht gefunden.")
+
+    connection.execute("UPDATE products SET active = 0 WHERE id = ?", (product_id,))
+    connection.commit()
+    connection.close()
+
+    return zurueck_url(hinweis=f"„{row['name']}“ wurde gelöscht.")
+
+@app.route("/produkte/<int:product_id>/bearbeiten", methods=["GET", "POST"])
+def produkt_bearbeiten(product_id):
+    """Zeigt ein vorausgefülltes Formular und speichert die Änderungen."""
+    # 'kategorie' steckt beim Aufruf in der URL (?kategorie=5) und beim
+    # Absenden im Hidden-Feld des Formulars. request.values liest beides.
+    zurueck = request.values.get("kategorie", "").strip()
+
+    def zurueck_url(**kwargs):
+        """Baut den Rücksprung – mit Kategorie, wenn eine gewählt war."""
+        if zurueck:
+            kwargs["kategorie"] = zurueck
+        return redirect(url_for("products", **kwargs))
+
+    connection = sqlite3.connect(BASE_DIR / "products.db")
+    connection.row_factory = sqlite3.Row
+
+    product = connection.execute(
+        "SELECT id, name, price_cents, unit, tax_rate, category_id "
+        "FROM products WHERE id = ? AND active = 1",
+        (product_id,),
+    ).fetchone()
+
+    if product is None:
+        connection.close()
+        return zurueck_url(fehler="Produkt nicht gefunden.")
+
+    categories = connection.execute(
+        "SELECT id, name FROM categories ORDER BY sort_order, name"
+    ).fetchall()
+
+    def zeige_formular(werte, fehler_text=None):
+        """Rendert die Seite. 'werte' sind die anzuzeigenden Feldinhalte."""
+        connection.close()
+        return render_template(
+            "product_edit.html",
+            product=werte,
+            categories=categories,
+            selected_category=zurueck,
+            fehler=fehler_text,
+        )
+
+    # --- GET: nur das Formular zeigen ---
+    if request.method == "GET":
+        werte = dict(product)
+        # Preis als Text "4,50" für das Eingabefeld vorbereiten.
+        werte["price_text"] = f"{product['price_cents'] / 100:.2f}".replace(".", ",")
+        return zeige_formular(werte)
+
+    # --- POST: Änderungen speichern ---
+    name = request.form.get("name", "").strip()
+    unit = request.form.get("unit", "").strip() or "Stück"
+    preis_text = request.form.get("price", "").strip().replace(",", ".")
+    tax_text = request.form.get("tax_rate", "").strip()
+    category_id = request.form.get("category_id") or None
+
+    # Die eingegebenen Werte – damit das Formular bei Fehlern nicht leer ist.
+    werte = {
+        "id": product_id,
+        "name": name,
+        "unit": unit,
+        "price_text": preis_text.replace(".", ","),
+        "tax_rate": tax_text,
+        "category_id": int(category_id) if category_id else None,
+    }
+
+    if not name:
+        return zeige_formular(werte, "Bitte einen Namen eingeben.")
+
+    try:
+        price_cents = round(float(preis_text) * 100)
+    except ValueError:
+        return zeige_formular(werte, "Bitte einen gültigen Preis eingeben, z. B. 4,50.")
+
+    if price_cents < 0:
+        return zeige_formular(werte, "Der Preis darf nicht negativ sein.")
+
+    if tax_text not in ("7", "19"):
+        return zeige_formular(werte, "Bitte einen Steuersatz wählen.")
+
+    # Anderes Produkt mit demselben Namen? (das eigene ausnehmen: id != ?)
+    doppelt = connection.execute(
+        "SELECT id FROM products "
+        "WHERE active = 1 AND lower(name) = lower(?) AND id != ?",
+        (name, product_id),
+    ).fetchone()
+    if doppelt:
+        return zeige_formular(werte, f"„{name}“ gibt es schon.")
+
+    connection.execute(
+        """
+        UPDATE products
+        SET name = ?, price_cents = ?, unit = ?, tax_rate = ?, category_id = ?
+        WHERE id = ?
+        """,
+        (name, price_cents, unit, int(tax_text), werte["category_id"], product_id),
+    )
+    connection.commit()
+    connection.close()
+
+    return zurueck_url(hinweis=f"„{name}“ wurde gespeichert.")
 
 @app.route("/api/products")
 def product_api():
-    # Den Wert aus /api/products?query=... auslesen.
     search_term = request.args.get("query", "").strip()
     if not search_term:
         return jsonify([])
 
-    # SQL-Treffer als JSON an JavaScript im Browser zurückgeben.
     products = search_products(search_term)
-    return jsonify(
-        [
-            {
-                "id": product["id"],
-                "name": product["name"],
-                "price_cents": product["price_cents"],
-                "unit": product["unit"],
-            }
-            for product in products
-        ]
-    )
+    return jsonify([
+        {
+            "id": product["id"],
+            "name": product["name"],
+            "price_cents": product["price_cents"],
+            "unit": product["unit"],
+            "tax_rate": product["tax_rate"],
+        }
+        for product in products
+    ])
 
 
 @app.route("/api/orders", methods=["POST"])

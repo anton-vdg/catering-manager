@@ -1,13 +1,29 @@
--- Diese Tabelle enthält alle Produkte, die verkauft werden können.
+-- Eine Kategorie bündelt Produkte, z. B. "Braten" oder "Suppen".
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  -- Reihenfolge auf der Seite (klein = oben). 10er-Schritte, damit man
+  -- später etwas dazwischen schieben kann.
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
   price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
   unit TEXT NOT NULL DEFAULT 'Stück',
-  active INTEGER NOT NULL DEFAULT 1
+  tax_rate INTEGER NOT NULL CHECK (tax_rate IN (7, 19)) DEFAULT 19,
+  active INTEGER NOT NULL DEFAULT 1,
+  -- NULL = noch keiner Kategorie zugeordnet.
+  -- ON DELETE SET NULL: Kategorie löschen setzt die Produkte auf
+  -- "ohne Kategorie", statt sie mitzulöschen.
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
 );
 
--- Ein Auftrag mit Kundendaten, Termin und Art der Übergabe.
+-- Verhindert doppelte Produktnamen. Wird beim Import gebraucht:
+-- existiert der Name schon, wird die Zeile übersprungen.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_name ON products(name);
+
 CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY,
   customer_name TEXT NOT NULL,
@@ -19,7 +35,6 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Die einzelnen Produkte einer Bestellung.
 CREATE TABLE IF NOT EXISTS order_items (
   id INTEGER PRIMARY KEY,
   order_id INTEGER NOT NULL,

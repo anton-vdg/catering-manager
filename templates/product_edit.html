@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Produkt bearbeiten – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="#">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+      </nav>
+    </header>
+
+    <main>
+      <h2>Produkt bearbeiten</h2>
+
+      {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
+
+      {#
+        method="post" schickt die Änderungen an dieselbe Route.
+        Das Hidden-Feld sorgt dafür, dass wir nach dem Speichern wieder
+        in der vorher gewählten Kategorie landen.
+      #}
+      <form method="post"
+            action="/produkte/{{ product['id'] }}/bearbeiten">
+        {% if selected_category %}
+          <input type="hidden" name="kategorie" value="{{ selected_category }}">
+        {% endif %}
+
+        <p>
+          <label for="name">Name</label><br>
+          {# value=... füllt das Feld mit dem bisherigen Namen vor. #}
+          <input type="text" id="name" name="name"
+                 value="{{ product['name'] }}" size="40" required>
+        </p>
+
+        <p>
+          <label for="price">Preis in €</label><br>
+          <input type="text" id="price" name="price"
+                 value="{{ product['price_text'] }}"
+                 inputmode="decimal" placeholder="z. B. 4,50" required>
+          <br>
+          <small>0 eintragen = „Preis auf Anfrage“.</small>
+        </p>
+
+        <p>
+          <label for="unit">Einheit</label><br>
+          <input type="text" id="unit" name="unit"
+                 value="{{ product['unit'] }}" list="einheiten">
+          <datalist id="einheiten">
+            <option value="Stück"></option>
+            <option value="Kilo"></option>
+            <option value="Liter"></option>
+            <option value="Person"></option>
+            <option value="Stunde"></option>
+            <option value="qm"></option>
+            <option value="Glas"></option>
+          </datalist>
+        </p>
+
+        <p>
+          <label for="tax_rate">MwSt.-Satz</label><br>
+          <select id="tax_rate" name="tax_rate">
+            {# selected markiert den aktuell gespeicherten Wert. #}
+            <option value="7"  {% if product['tax_rate']|string == '7'  %}selected{% endif %}>7 % (Speisen)</option>
+            <option value="19" {% if product['tax_rate']|string == '19' %}selected{% endif %}>19 % (Non-Food)</option>
+          </select>
+        </p>
+
+        <p>
+          <label for="category_id">Kategorie</label><br>
+          <select id="category_id" name="category_id">
+            <option value="">– keine –</option>
+            {% for k in categories %}
+              <option value="{{ k['id'] }}"
+                      {% if product['category_id'] == k['id'] %}selected{% endif %}>
+                {{ k['name'] }}
+              </option>
+            {% endfor %}
+          </select>
+        </p>
+
+        <div class="button-gruppe">
+          <button type="submit">Speichern</button>
+          {# Abbrechen ist ein einfacher Link zurück zur Liste. #}
+          <a class="abbrechen"
+             href="/produkte{% if selected_category %}?kategorie={{ selected_category }}{% endif %}">
+            Abbrechen
+          </a>
+        </div>
+      </form>
+    </main>
+  </body>
+</html>
