@@ -1,39 +1,94 @@
-import sqlite3
-from datetime import date
-from pathlib import Path
+"""
+Catering Manager – Flask-Anwendung
+==================================
 
+Das ist der "Server" des Projekts. Er nimmt Anfragen vom Browser entgegen,
+liest und schreibt in die SQLite-Datenbank `products.db` und füllt die
+HTML-Vorlagen aus dem Ordner `templates/` mit Daten.
+
+Starten:  python app.py   ->   http://127.0.0.1:5000
+"""
+
+# ===================================================================
+# 1. Importe
+# ===================================================================
+# Standardbibliothek von Python – nichts zu installieren.
+import sqlite3                      # Datenbankzugriff
+from datetime import date           # heutiges Datum für die Tagesansicht
+from io import BytesIO              # PDF im Arbeitsspeicher statt auf Platte
+from pathlib import Path            # Dateipfade unabhängig vom Betriebssystem
+from xml.sax.saxutils import escape # Sonderzeichen (<, >, &) für PDFs entschärfen
+
+# Flask = das Web-Framework. Ohne Flask gäbe es keine Routen und keine Templates.
 from flask import (
-    Flask,
-    jsonify,
-    redirect,
-    render_template,
-    request,
-    send_from_directory,
-    url_for,
+    Flask,              # die Anwendung selbst
+    abort,              # eine Anfrage mit Fehlercode abbrechen (z. B. 404)
+    jsonify,            # Python-Daten als JSON an den Browser schicken
+    redirect,           # Browser auf eine andere URL schicken
+    render_template,    # HTML-Vorlage mit Daten füllen
+    request,            # alles, was der Browser geschickt hat (Formular, URL, JSON)
+    send_file,          # eine Datei (hier: PDF) ausliefern
+    send_from_directory,# eine Datei aus dem Projektordner ausliefern (CSS, JS)
+    url_for,            # URL aus dem Namen einer Route bauen
 )
 
-from io import BytesIO
-from xml.sax.saxutils import escape
-
-from flask import abort, send_file
+# ReportLab erzeugt die PDFs. Wird nur von order_pdf() gebraucht.
+from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A5
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-# Projektordner: Von hier aus finden wir Datenbank und Dateien zuverlässig.
+
+# ===================================================================
+# 2. Pfade
+# ===================================================================
+# BASE_DIR = der Ordner, in dem diese Datei liegt. Von hier aus werden
+# Datenbank, CSS, JS und SQL-Dateien gefunden – egal, von wo die App startet.
 BASE_DIR = Path(__file__).parent
+DB_PATH = BASE_DIR / "products.db"
+
+
+# ===================================================================
+# 3. Datenbank
+# ===================================================================
+def connect_db():
+    """
+    Öffnet die Datenbank und gibt die Verbindung zurück.
+
+    Wird von JEDER Funktion benutzt, die mit der Datenbank spricht.
+    Die zwei Einstellungen darin sind der eigentliche Grund für diese Funktion:
+
+    - row_factory = sqlite3.Row
+      Danach liest man Zeilen per Spaltenname: produkt["name"] statt produkt[1].
+      Ohne das müsste man sich merken, an welcher Position welche Spalte steht.
+
+    - PRAGMA foreign_keys = ON
+      SQLite prüft Fremdschlüssel standardmäßig NICHT. Ohne diese Zeile könnte
+      man eine Bestellzeile auf ein gelöschtes Produkt verweisen lassen.
+      Das PRAGMA gilt pro Verbindung, muss also bei jeder neu gesetzt werden.
+    """
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
 
 def init_db():
-    """Legt fehlende Tabellen an und spielt die Startdaten ein."""
-    db = sqlite3.connect(BASE_DIR / "products.db")
-    db.execute("PRAGMA foreign_keys = ON")
+    """
+    Wird EINMAL beim Start der App aufgerufen (siehe Dateiende).
 
-    # 1. Kategorien sicherstellen – muss VOR category_id existieren.
+    Aufgabe: eine bereits vorhandene, ältere Datenbank auf den aktuellen Stand
+    bringen und die Preisliste einspielen. Mehrfaches Ausführen ist unschädlich,
+    weil alles mit "IF NOT EXISTS" bzw. "INSERT OR IGNORE" arbeitet.
+    """
+    db = connect_db()
+
+    # 3a) Kategorietabelle anlegen, falls sie fehlt.
+    #     Muss VOR der category_id-Spalte passieren, weil products darauf verweist.
     db.execute("""
         CREATE TABLE IF NOT EXISTS categories (
           id INTEGER PRIMARY KEY,
@@ -42,17 +97,24 @@ def init_db():
         )
     """)
 
-    # 2. Alte products-Tabelle um fehlende Spalten ergänzen.
-    spalten = [z[1] for z in db.execute("PRAGMA table_info(products)")]
-    if spalten:  # Tabelle existiert schon
+    # 3b) Existiert die products-Tabelle schon, ergänze fehlende Spalten.
+    #     PRAGMA table_info liefert eine Zeile pro Spalte; [1] ist der Name.
+    spalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(products)")]
+    if spalten:
         if "active" not in spalten:
             db.execute("ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
         if "category_id" not in spalten:
-            db.execute("ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)")
+            db.execute(
+                "ALTER TABLE products ADD COLUMN category_id INTEGER "
+                "REFERENCES categories(id)"
+            )
         if "tax_rate" not in spalten:
-            db.execute("ALTER TABLE products ADD COLUMN tax_rate INTEGER NOT NULL DEFAULT 19")
+            db.execute(
+                "ALTER TABLE products ADD COLUMN tax_rate INTEGER NOT NULL DEFAULT 19"
+            )
 
-    # 3. Struktur + Preisliste einspielen. Mehrfach ausführbar.
+    # 3c) schema.sql = Tabellenstruktur, produktliste.sql = Startinhalte.
+    #     executescript führt mehrere SQL-Befehle hintereinander aus.
     db.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
     db.executescript((BASE_DIR / "produktliste.sql").read_text(encoding="utf-8"))
 
@@ -60,25 +122,52 @@ def init_db():
     db.close()
 
 
-init_db()
-
-# Die zentrale Flask-Anwendung / der lokale Webserver.
+# ===================================================================
+# 4. Flask-Anwendung und PDF-Schriften
+# ===================================================================
 app = Flask(__name__)
+
 FONT_DIR = BASE_DIR / "fonts"
 pdfmetrics.registerFont(TTFont("ComicSans", str(FONT_DIR / "Comic Sans MS.ttf")))
 pdfmetrics.registerFont(TTFont("ComicSans-Bold", str(FONT_DIR / "Comic Sans MS Bold.ttf")))
-# Damit <b>...</b> in Paragraphen die fette Variante nimmt.
+# Damit <b>...</b> in einem Paragraph die fette Variante benutzt.
 pdfmetrics.registerFontFamily(
     "ComicSans",
-    normal="ComicSans", bold="ComicSans-Bold",
-    italic="ComicSans", boldItalic="ComicSans-Bold",
+    normal="ComicSans",
+    bold="ComicSans-Bold",
+    italic="ComicSans",
+    boldItalic="ComicSans-Bold",
 )
 
 
+def euro(cents):
+    """
+    12345 -> '123,45 €'.
+
+    Benutzt in: order_pdf() für den Gesamtbetrag.
+    Die HTML-Vorlagen formatieren selbst über den Jinja-Filter '%.2f'|format().
+    """
+    return f"{cents / 100:.2f}".replace(".", ",") + " €"
+
+
+# ===================================================================
+# 5. Lesefunktionen (werden von den Routen weiter unten aufgerufen)
+# ===================================================================
 def get_products(category_id=None):
-    """Liest sichtbare Produkte, optional nur die einer Kategorie."""
-    connection = sqlite3.connect(BASE_DIR / "products.db")
-    connection.row_factory = sqlite3.Row
+    """
+    Liest alle SICHTBAREN Produkte, optional nur die einer Kategorie.
+
+    category_id=None  -> alle Kategorien (Produkteseite ohne Filter)
+    category_id=5     -> nur Produkte der Kategorie 5
+
+    Verwendet in: products()
+
+    Das COALESCE(...) sorgt dafür, dass Produkte ohne Kategorie nicht
+    verschwinden, sondern als "Ohne Kategorie" auftauchen.
+    Das ? ist ein Platzhalter – der Wert wird sicher eingesetzt,
+    damit niemand SQL über das Suchfeld einschleusen kann.
+    """
+    connection = connect_db()
 
     sql = """
         SELECT p.id, p.name, p.price_cents, p.unit, p.tax_rate,
@@ -90,7 +179,7 @@ def get_products(category_id=None):
     """
     params = []
 
-    # Nur wenn eine Kategorie gewählt wurde, kommt der Zusatz dazu.
+    # Der Filter wird nur angehängt, wenn wirklich eine Kategorie gewählt ist.
     if category_id is not None:
         sql += " AND p.category_id = ?"
         params.append(category_id)
@@ -103,8 +192,15 @@ def get_products(category_id=None):
 
 
 def search_products(search_term):
-    connection = sqlite3.connect(BASE_DIR / "products.db")
-    connection.row_factory = sqlite3.Row
+    """
+    Sucht sichtbare Produkte, deren Name den Suchbegriff enthält.
+
+    Verwendet in: product_api()  ->  aufgerufen von order.js beim Tippen.
+
+    LIKE '%begriff%' bedeutet "enthält". Die Prozentzeichen sind der
+    Platzhalter dafür, das ? setzt den Suchbegriff sicher ein.
+    """
+    connection = connect_db()
 
     products = connection.execute(
         """
@@ -121,29 +217,43 @@ def search_products(search_term):
 
 
 def get_orders_for_day(selected_date):
-    """Liest alle Aufträge und Positionen für ein bestimmtes Datum."""
-    connection = sqlite3.connect(BASE_DIR / "products.db")
-    connection.row_factory = sqlite3.Row
+    """
+    Liest alle Bestellungen eines Tages samt Positionen und Gesamtsumme.
 
-    # Uhrzeiten im Format HH:MM lassen sich als Text korrekt sortieren.
+    selected_date ist ein Text im Format "2026-11-12", weil SQLite
+    Datumswerte als Text speichert. Dieses Format lässt sich alphabetisch
+    sortieren – deshalb funktioniert ORDER BY order_time.
+
+    Verwendet in: day_view()
+
+    Hinweis: Pro Bestellung wird eine eigene Abfrage gemacht. Bei 20
+    Bestellungen am Tag sind das 20 Abfragen – für diesen Betrieb völlig okay.
+    """
+    connection = connect_db()
+
     order_rows = connection.execute(
-        "SELECT * FROM orders WHERE order_date = ? ORDER BY order_time", (selected_date,)
+        "SELECT * FROM orders WHERE order_date = ? ORDER BY order_time",
+        (selected_date,),
     ).fetchall()
 
     orders = []
     for order_row in order_rows:
         order = dict(order_row)
-        # JOIN ergänzt jede Bestellposition mit Produktname und Einheit.
+
+        # JOIN holt zu jeder Position den Produktnamen und die Einheit dazu.
         item_rows = connection.execute(
             """
-            SELECT products.name, products.unit, order_items.quantity, order_items.unit_price_cents
+            SELECT products.name, products.unit,
+                   order_items.quantity, order_items.unit_price_cents
             FROM order_items
             JOIN products ON products.id = order_items.product_id
             WHERE order_items.order_id = ?
             """,
             (order["id"],),
         ).fetchall()
+
         order["items"] = [dict(item) for item in item_rows]
+        # Gesamtbetrag = Menge × damals gespeicherter Preis, aufsummiert.
         order["total_cents"] = sum(
             item["quantity"] * item["unit_price_cents"] for item in item_rows
         )
@@ -153,36 +263,97 @@ def get_orders_for_day(selected_date):
     return orders
 
 
+def get_order_details(order_id):
+    """
+    Liest eine einzelne Bestellung samt Positionen und Gesamtsumme.
+
+    Verwendet in: order_pdf()
+    Gibt (order, items, total_cents) zurück. Ist die Bestellung nicht
+    vorhanden, kommt (None, [], 0) zurück – der Aufrufer prüft das.
+    """
+    connection = connect_db()
+
+    order = connection.execute(
+        "SELECT * FROM orders WHERE id = ?", (order_id,)
+    ).fetchone()
+
+    if order is None:
+        connection.close()
+        return None, [], 0
+
+    items = connection.execute(
+        """
+        SELECT products.name AS product_name, products.unit,
+               order_items.quantity, order_items.unit_price_cents
+        FROM order_items
+        JOIN products ON products.id = order_items.product_id
+        WHERE order_items.order_id = ?
+        """,
+        (order_id,),
+    ).fetchall()
+
+    connection.close()
+
+    total_cents = sum(item["quantity"] * item["unit_price_cents"] for item in items)
+    return order, items, total_cents
+
+
+# ===================================================================
+# 6. Routen: Seiten und statische Dateien
+# ===================================================================
 @app.route("/")
 def home():
-    # Startseite aus dem Ordner templates laden.
+    """Startseite mit dem Formular für neue Bestellungen. Datei: home.html"""
     return render_template("home.html")
 
 
 @app.route("/style.css")
 def stylesheet():
+    """
+    Liefert das Stylesheet aus. Nötig, weil Flask Dateien im Projektordner
+    nicht automatisch ausliefert – nur den Ordner "static/".
+    Eingebunden in: allen HTML-Dateien über <link rel="stylesheet" href="/style.css">
+    """
     return send_from_directory(BASE_DIR, "style.css")
 
 
+@app.route("/order.js")
+def order_script():
+    """
+    Liefert das JavaScript der Bestellseite aus.
+    Eingebunden in: home.html über <script src="/order.js">
+    """
+    return send_from_directory(BASE_DIR, "order.js")
+
+
+# ===================================================================
+# 7. Routen: Produkte
+# ===================================================================
 @app.route("/produkte")
 def products():
-    # Auswahl aus der URL lesen: /produkte?kategorie=5
-    # Leer oder Unsinn -> None -> alle Kategorien anzeigen.
+    """
+    Produkteliste, optional nach Kategorie gefiltert. Datei: produkte.html
+
+    Der Filter steckt in der URL:  /produkte?kategorie=5
+    Kein Parameter -> alle Kategorien.
+    """
+    # isdigit() prüft, ob wirklich nur Ziffern drinstehen. Sonst None.
+    # Das verhindert Abstürze, wenn jemand ?kategorie=abc in die URL tippt.
     kategorie = request.args.get("kategorie", "").strip()
     selected_category = int(kategorie) if kategorie.isdigit() else None
 
     rows = get_products(selected_category)
 
-    # Flache Liste in Gruppen umbauen. Ist eine Kategorie gefiltert,
-    # entsteht hier eben nur eine einzige Gruppe.
+    # Aus der flachen Liste Gruppen bauen: pro Kategorie ein Eintrag.
+    # Die Sortierung kommt schon aus dem SQL, deshalb reicht ein Vergleich
+    # mit dem zuletzt angelegten Gruppennamen.
     gruppen = []
     for row in rows:
         if not gruppen or gruppen[-1]["name"] != row["category_name"]:
             gruppen.append({"name": row["category_name"], "produkte": []})
         gruppen[-1]["produkte"].append(dict(row))
 
-    connection = sqlite3.connect(BASE_DIR / "products.db")
-    connection.row_factory = sqlite3.Row
+    connection = connect_db()
     categories = connection.execute(
         "SELECT id, name FROM categories ORDER BY sort_order, name"
     ).fetchall()
@@ -193,23 +364,38 @@ def products():
         gruppen=gruppen,
         categories=categories,
         selected_category=selected_category,
+        # hinweis/fehler kommen als ?hinweis=... aus der URL, gesetzt von
+        # den Routen weiter unten nach einer erfolgreichen Aktion.
         hinweis=request.args.get("hinweis"),
         fehler=request.args.get("fehler"),
     )
 
+
 @app.route("/produkte/hinzufuegen", methods=["POST"])
 def produkt_hinzufuegen():
+    """
+    Legt ein neues Produkt an.
+    Abgeschickt von: dem Formular in produkte.html.
+    """
     name = request.form.get("name", "").strip()
     unit = request.form.get("unit", "").strip() or "Stück"
     preis_text = request.form.get("price", "").strip().replace(",", ".")
-    zurueck = request.form.get("kategorie", "").strip()   # NEU
+    tax_text = request.form.get("tax_rate", "7").strip()
+    zurueck = request.form.get("kategorie", "").strip()
 
+    # Leerer Wert im <select> kommt als "" an – daraus None machen.
+    # int() kann auch scheitern, wenn jemand am HTML manipuliert hat.
     category_id = request.form.get("category_id") or None
-    if category_id is not None:
-        category_id = int(category_id)
+    try:
+        category_id = int(category_id) if category_id else None
+    except ValueError:
+        category_id = None
 
-    # Hilfsfunktion: baut die Rücksprung-URL mit oder ohne Kategorie.
     def zurueck_url(**kwargs):
+        """
+        Baut die Rücksprung-URL. Die gewählte Kategorie wird mitgenommen,
+        damit man nach dem Speichern wieder in derselben Ansicht landet.
+        """
         if zurueck:
             kwargs["kategorie"] = zurueck
         return redirect(url_for("products", **kwargs))
@@ -225,17 +411,27 @@ def produkt_hinzufuegen():
     if price_cents < 0:
         return zurueck_url(fehler="Der Preis darf nicht negativ sein.")
 
-    connection = sqlite3.connect(BASE_DIR / "products.db")
+    if tax_text not in ("7", "19"):
+        return zurueck_url(fehler="Bitte einen Steuersatz wählen.")
+
+    connection = connect_db()
+
+    # Doppelte Namen verhindern. lower() macht den Vergleich
+    # unabhängig von Groß-/Kleinschreibung: "Ente" = "ente".
     schon_da = connection.execute(
-        "SELECT id FROM products WHERE active = 1 AND lower(name) = lower(?)", (name,)
+        "SELECT id FROM products WHERE active = 1 AND lower(name) = lower(?)",
+        (name,),
     ).fetchone()
     if schon_da:
         connection.close()
         return zurueck_url(fehler=f"„{name}“ gibt es schon.")
 
     connection.execute(
-        "INSERT INTO products (name, price_cents, unit, category_id) VALUES (?, ?, ?, ?)",
-        (name, price_cents, unit, category_id),
+        """
+        INSERT INTO products (name, price_cents, unit, tax_rate, category_id)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (name, price_cents, unit, int(tax_text), category_id),
     )
     connection.commit()
     connection.close()
@@ -245,17 +441,27 @@ def produkt_hinzufuegen():
 
 @app.route("/produkte/<int:product_id>/loeschen", methods=["POST"])
 def produkt_loeschen(product_id):
-    zurueck = request.form.get("kategorie", "").strip()   # NEU
+    """
+    "Löscht" ein Produkt, indem active auf 0 gesetzt wird.
+    Abgeschickt von: dem 🗑️-Knopf in produkte.html.
+
+    Warum kein echtes DELETE?
+    Alte Bestellungen verweisen über order_items.product_id auf das Produkt.
+    Ein DELETE würde diese Verweise zerstören – alte Rechnungen wären kaputt.
+    Mit active = 0 verschwindet das Produkt nur aus der Auswahl.
+    """
+    zurueck = request.form.get("kategorie", "").strip()
 
     def zurueck_url(**kwargs):
         if zurueck:
             kwargs["kategorie"] = zurueck
         return redirect(url_for("products", **kwargs))
 
-    connection = sqlite3.connect(BASE_DIR / "products.db")
+    connection = connect_db()
     row = connection.execute(
         "SELECT name FROM products WHERE id = ? AND active = 1", (product_id,)
     ).fetchone()
+
     if row is None:
         connection.close()
         return zurueck_url(fehler="Produkt nicht gefunden.")
@@ -266,21 +472,28 @@ def produkt_loeschen(product_id):
 
     return zurueck_url(hinweis=f"„{row['name']}“ wurde gelöscht.")
 
+
 @app.route("/produkte/<int:product_id>/bearbeiten", methods=["GET", "POST"])
 def produkt_bearbeiten(product_id):
-    """Zeigt ein vorausgefülltes Formular und speichert die Änderungen."""
-    # 'kategorie' steckt beim Aufruf in der URL (?kategorie=5) und beim
-    # Absenden im Hidden-Feld des Formulars. request.values liest beides.
+    """
+    Zeigt ein vorausgefülltes Formular und speichert die Änderungen.
+    Datei: product_edit.html
+    Aufgerufen von: dem ✏️-Knopf in produkte.html.
+
+    GET  = Formular anzeigen (Werte aus der Datenbank)
+    POST = Änderungen speichern (Werte aus dem Formular)
+
+    request.values liest BEIDES: URL-Parameter (?kategorie=5) und
+    Formularfelder. Damit funktioniert derselbe Code für GET und POST.
+    """
     zurueck = request.values.get("kategorie", "").strip()
 
     def zurueck_url(**kwargs):
-        """Baut den Rücksprung – mit Kategorie, wenn eine gewählt war."""
         if zurueck:
             kwargs["kategorie"] = zurueck
         return redirect(url_for("products", **kwargs))
 
-    connection = sqlite3.connect(BASE_DIR / "products.db")
-    connection.row_factory = sqlite3.Row
+    connection = connect_db()
 
     product = connection.execute(
         "SELECT id, name, price_cents, unit, tax_rate, category_id "
@@ -297,7 +510,11 @@ def produkt_bearbeiten(product_id):
     ).fetchall()
 
     def zeige_formular(werte, fehler_text=None):
-        """Rendert die Seite. 'werte' sind die anzuzeigenden Feldinhalte."""
+        """
+        Rendert product_edit.html. 'werte' enthält die anzuzeigenden
+        Feldinhalte – beim GET die gespeicherten, beim POST die gerade
+        eingegebenen (damit bei einem Fehler nichts verloren geht).
+        """
         connection.close()
         return render_template(
             "product_edit.html",
@@ -307,28 +524,33 @@ def produkt_bearbeiten(product_id):
             fehler=fehler_text,
         )
 
-    # --- GET: nur das Formular zeigen ---
+    # ---------- GET: nur anzeigen ----------
     if request.method == "GET":
         werte = dict(product)
-        # Preis als Text "4,50" für das Eingabefeld vorbereiten.
+        # Preis als "4,50" fürs Eingabefeld vorbereiten (deutsche Schreibweise).
         werte["price_text"] = f"{product['price_cents'] / 100:.2f}".replace(".", ",")
         return zeige_formular(werte)
 
-    # --- POST: Änderungen speichern ---
+    # ---------- POST: speichern ----------
     name = request.form.get("name", "").strip()
     unit = request.form.get("unit", "").strip() or "Stück"
     preis_text = request.form.get("price", "").strip().replace(",", ".")
     tax_text = request.form.get("tax_rate", "").strip()
     category_id = request.form.get("category_id") or None
 
-    # Die eingegebenen Werte – damit das Formular bei Fehlern nicht leer ist.
+    try:
+        category_id = int(category_id) if category_id else None
+    except ValueError:
+        category_id = None
+
+    # Die eingegebenen Werte für ein erneutes Anzeigen des Formulars.
     werte = {
         "id": product_id,
         "name": name,
         "unit": unit,
         "price_text": preis_text.replace(".", ","),
         "tax_rate": tax_text,
-        "category_id": int(category_id) if category_id else None,
+        "category_id": category_id,
     }
 
     if not name:
@@ -345,7 +567,8 @@ def produkt_bearbeiten(product_id):
     if tax_text not in ("7", "19"):
         return zeige_formular(werte, "Bitte einen Steuersatz wählen.")
 
-    # Anderes Produkt mit demselben Namen? (das eigene ausnehmen: id != ?)
+    # Gibt es ein ANDERES Produkt mit demselben Namen?
+    # id != ? nimmt das eigene Produkt aus, sonst würde es sich selbst blockieren.
     doppelt = connection.execute(
         "SELECT id FROM products "
         "WHERE active = 1 AND lower(name) = lower(?) AND id != ?",
@@ -360,15 +583,27 @@ def produkt_bearbeiten(product_id):
         SET name = ?, price_cents = ?, unit = ?, tax_rate = ?, category_id = ?
         WHERE id = ?
         """,
-        (name, price_cents, unit, int(tax_text), werte["category_id"], product_id),
+        (name, price_cents, unit, int(tax_text), category_id, product_id),
     )
     connection.commit()
     connection.close()
 
     return zurueck_url(hinweis=f"„{name}“ wurde gespeichert.")
 
+
+# ===================================================================
+# 8. API für die Bestellseite
+# ===================================================================
 @app.route("/api/products")
 def product_api():
+    """
+    Liefert Suchergebnisse als JSON an order.js.
+    Aufgerufen von: order.js beim Tippen ins Suchfeld (fetch).
+    Antwort z. B.: [{"id": 5, "name": "Ente", "price_cents": 4000, ...}]
+
+    tax_rate MUSS mitgeliefert werden – ohne das Feld rechnet order.js
+    die MwSt. nicht aus und zeigt NaN an.
+    """
     search_term = request.args.get("query", "").strip()
     if not search_term:
         return jsonify([])
@@ -388,7 +623,14 @@ def product_api():
 
 @app.route("/api/orders", methods=["POST"])
 def order_api():
-    """Speichert eine Bestellung und ihre Positionen in einer Transaktion."""
+    """
+    Speichert eine Bestellung samt Positionen.
+    Aufgerufen von: order.js beim Absenden des Formulars (fetch, JSON body).
+
+    Alles passiert in EINER Verbindung. Entweder wird der Auftrag mit allen
+    Positionen gespeichert – oder bei einem Fehler gar nichts. Man nennt das
+    eine Transaktion: kein halb gespeicherter Auftrag ohne Positionen.
+    """
     data = request.get_json(silent=True) or {}
     customer_name = data.get("customer_name", "").strip()
     delivery_address = data.get("delivery_address", "").strip()
@@ -398,58 +640,81 @@ def order_api():
     fulfillment_type = data.get("fulfillment_type", "").strip()
     items = data.get("items", [])
 
-    # Auch der Server prüft alle Pflichtdaten, nicht nur das HTML-Formular.
-    if not customer_name or not customer_phone or not order_date or not order_time or not items:
-        return jsonify({"error": "Bitte alle Pflichtfelder und mindestens ein Produkt angeben."}), 400
+    # Der Server prüft selbst. HTML-Felder mit required reichen nicht,
+    # weil man fetch auch ohne Browser aufrufen kann.
+    if not customer_name or not customer_phone or not order_date \
+            or not order_time or not items:
+        return jsonify({
+            "error": "Bitte alle Pflichtfelder und mindestens ein Produkt angeben."
+        }), 400
+
     if fulfillment_type not in {"abholung", "lieferung"}:
         return jsonify({"error": "Ungültige Art der Bestellung."}), 400
 
+    connection = connect_db()
     try:
-        with sqlite3.connect(BASE_DIR / "products.db") as connection:
-            # Fremdschlüssel verhindern Verweise auf nicht vorhandene Produkte.
-            connection.execute("PRAGMA foreign_keys = ON")
+        # 1) Den Auftrag speichern und seine neue ID merken.
+        cursor = connection.execute(
+            """
+            INSERT INTO orders
+                (customer_name, delivery_address, customer_phone,
+                 order_date, order_time, fulfillment_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (customer_name, delivery_address, customer_phone,
+             order_date, order_time, fulfillment_type),
+        )
+        order_id = cursor.lastrowid
 
-            # Zuerst den Auftrag speichern und seine neue ID merken.
-            cursor = connection.execute(
+        # 2) Die Positionen speichern.
+        for item in items:
+            product_id = int(item["product_id"])
+            quantity = int(item["quantity"])
+            if quantity < 1:
+                raise ValueError("Die Menge muss mindestens 1 sein.")
+
+            # Preis aus der DATENBANK lesen, nicht aus dem Browser.
+            # Sonst könnte jemand den Preis manipulieren.
+            product = connection.execute(
+                "SELECT price_cents FROM products WHERE id = ?", (product_id,)
+            ).fetchone()
+            if product is None:
+                raise ValueError("Ein ausgewähltes Produkt existiert nicht mehr.")
+
+            # unit_price_cents ist ein SNAPSHOT: der Preis zum Bestellzeitpunkt.
+            # Ändert sich der Produktpreis später, bleibt die Rechnung korrekt.
+            connection.execute(
                 """
-                INSERT INTO orders
-                    (customer_name, delivery_address, customer_phone, order_date, order_time, fulfillment_type)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO order_items
+                    (order_id, product_id, quantity, unit_price_cents)
+                VALUES (?, ?, ?, ?)
                 """,
-                (customer_name, delivery_address, customer_phone, order_date, order_time, fulfillment_type),
+                (order_id, product_id, quantity, product["price_cents"]),
             )
-            order_id = cursor.lastrowid
 
-            for item in items:
-                product_id = int(item["product_id"])
-                quantity = int(item["quantity"])
-                if quantity < 1:
-                    raise ValueError("Die Menge muss mindestens 1 sein.")
-
-                product = connection.execute(
-                    "SELECT price_cents FROM products WHERE id = ?", (product_id,)
-                ).fetchone()
-                if product is None:
-                    raise ValueError("Ein ausgewähltes Produkt existiert nicht mehr.")
-
-                connection.execute(
-                    """
-                    INSERT INTO order_items
-                        (order_id, product_id, quantity, unit_price_cents)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (order_id, product_id, quantity, product[0]),
-                )
-    except (KeyError, TypeError, ValueError):
+        connection.commit()
+    except (KeyError, TypeError, ValueError, sqlite3.IntegrityError):
+        # rollback() macht alle Änderungen dieser Transaktion rückgängig.
+        connection.rollback()
+        connection.close()
         return jsonify({"error": "Ungültige Produktdaten."}), 400
 
+    connection.close()
     return jsonify({"message": "Bestellung gespeichert.", "order_id": order_id}), 201
 
 
+# ===================================================================
+# 9. Tagesansicht
+# ===================================================================
 @app.route("/tagesansicht")
 def day_view():
-    # Datum aus der URL lesen; ohne Angabe ist es der heutige Tag.
+    """
+    Alle Bestellungen eines Tages. Datei: tagesansicht.html
+    Datum kommt aus der URL:  /tagesansicht?date=2026-11-12
+    Ohne Angabe oder bei ungültigem Datum: heute.
+    """
     selected_date = request.args.get("date", date.today().isoformat())
+
     try:
         date.fromisoformat(selected_date)
     except ValueError:
@@ -464,51 +729,48 @@ def day_view():
 
 @app.route("/bestellungen/<int:order_id>/loeschen", methods=["POST"])
 def delete_order(order_id):
-    """Löscht einen Auftrag und alle zugehörigen Positionen."""
+    """
+    Löscht eine Bestellung samt Positionen.
+    Abgeschickt von: dem 🗑️-Knopf in tagesansicht.html.
+
+    Hier ist ein echtes DELETE richtig, weil Bestellungen keine
+    "Geschichte" für andere Tabellen sind. Ohne die Reihenfolge
+    (erst Positionen, dann Auftrag) würde der Fremdschlüssel meckern.
+    """
     selected_date = request.form.get("date", date.today().isoformat())
 
-    with sqlite3.connect(BASE_DIR / "products.db") as connection:
-        # Erst die untergeordneten Positionen löschen, dann den Auftrag selbst.
-        connection.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
-        connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    connection = connect_db()
+    connection.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
+    connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    connection.commit()
+    connection.close()
 
-    # Nach dem Löschen zurück zur selben Tagesansicht gehen.
+    # Zurück zur selben Tagesansicht, nicht zur Startseite.
     return redirect(url_for("day_view", date=selected_date))
 
-def get_order_details(order_id):
-    """Liest Auftrag, Positionen (mit Produktname) und Gesamtbetrag."""
-    with sqlite3.connect(BASE_DIR / "products.db") as connection:
-        connection.row_factory = sqlite3.Row
 
-        order = connection.execute(
-            "SELECT * FROM orders WHERE id = ?", (order_id,)
-        ).fetchone()
-        if order is None:
-            return None, [], 0
-
-        items = connection.execute(
-            """
-            SELECT products.name AS product_name, products.unit,
-                   order_items.quantity, order_items.unit_price_cents
-            FROM order_items
-            JOIN products ON products.id = order_items.product_id
-            WHERE order_items.order_id = ?
-            """,
-            (order_id,),
-        ).fetchall()
-
-    total_cents = sum(i["quantity"] * i["unit_price_cents"] for i in items)
-    return order, items, total_cents
-
-
+# ===================================================================
+# 10. PDF
+# ===================================================================
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag",
             "Freitag", "Samstag", "Sonntag"]
 
 
 @app.route("/bestellungen/<int:order_id>/pdf")
 def order_pdf(order_id):
-    """Erzeugt ein A5-PDF mit allen Daten einer Bestellung."""
-    order, items, _total_cents = get_order_details(order_id)
+    """
+    Erzeugt ein A5-PDF einer Bestellung und schickt es an den Browser.
+    Aufgerufen von: dem 📄-Knopf in tagesansicht.html (öffnet neuen Tab).
+
+    Die Struktur ist immer gleich bei ReportLab:
+      1. Styles definieren (Schriftart, Größe, Ausrichtung)
+      2. buffer = BytesIO()  -> das PDF entsteht im Arbeitsspeicher
+      3. doc = SimpleDocTemplate(...)  -> Seite mit Rändern
+      4. story = Liste von Absätzen/Tabellen  -> der Inhalt
+      5. doc.build(story)  -> schreibt ins buffer
+      6. send_file(buffer) -> schickt es raus
+    """
+    order, items, total_cents = get_order_details(order_id)
     if order is None:
         abort(404)
 
@@ -516,6 +778,7 @@ def order_pdf(order_id):
     date_text = f"{WEEKDAYS[day.weekday()]}, {day.strftime('%d.%m.')}"
     fulfillment = "Abholung" if order["fulfillment_type"] == "abholung" else "Lieferung"
 
+    # ---- Styles ----
     base = ParagraphStyle("base", fontName="ComicSans", fontSize=14, leading=19)
     center = ParagraphStyle("center", parent=base, fontName="ComicSans-Bold",
                             fontSize=16, leading=20, alignment=TA_CENTER)
@@ -527,12 +790,13 @@ def order_pdf(order_id):
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A5,
-        leftMargin=1 * cm, rightMargin=1 * cm, topMargin=1 * cm, bottomMargin=1 * cm,
+        leftMargin=1 * cm, rightMargin=1 * cm,
+        topMargin=1 * cm, bottomMargin=1 * cm,
         title=f"Bestellung Nr. {order_id}",
     )
 
-    # Kopfzeile: links leer, Mitte Tag und Datum, rechts Uhrzeit und Art.
-    # Die beiden äußeren Spalten sind gleich breit, damit das Datum mittig sitzt.
+    # ---- Kopfzeile: links leer, Mitte Datum, rechts Uhrzeit + Art ----
+    # Die äußeren Spalten sind gleich breit, damit das Datum wirklich mittig sitzt.
     header = Table(
         [[
             "",
@@ -549,8 +813,12 @@ def order_pdf(order_id):
         ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
     ]))
 
-    story = [header, Spacer(1, 0.5 * cm),
-             Paragraph(f"<b>{escape(order['customer_name'])}</b>", base)]
+    # ---- Inhalt zusammenbauen ----
+    story = [
+        header,
+        Spacer(1, 0.5 * cm),
+        Paragraph(f"<b>{escape(order['customer_name'])}</b>", base),
+    ]
     if order["delivery_address"]:
         story.append(Paragraph(escape(order["delivery_address"]), base))
     if order["customer_phone"]:
@@ -559,26 +827,34 @@ def order_pdf(order_id):
     story.append(Paragraph("Bestellung", heading))
     for item in items:
         story.append(Paragraph(
-            f"{item['quantity']} × {escape(item['product_name'])} ({escape(item['unit'])})",
+            f"{item['quantity']} × {escape(item['product_name'])} "
+            f"({escape(item['unit'])})",
             base,
         ))
 
+    # NEU: Gesamtbetrag am Ende. escape() ist hier nicht nötig, weil euro()
+    # nur Ziffern, Komma, Punkt und € liefert.
+    if total_cents:
+        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph(f"<b>Gesamtbetrag: {euro(total_cents)}</b>", right))
+
     doc.build(story)
     buffer.seek(0)
-    return send_file(buffer, mimetype="application/pdf",
-                     download_name=f"Bestellung_{order_id}.pdf")
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        download_name=f"Bestellung_{order_id}.pdf",
+    )
 
 
-
-@app.route("/order.js")
-def order_script():
-    # JavaScript-Datei für die interaktive Bestellung ausliefern.
-    return send_from_directory(BASE_DIR, "order.js")
-
-
-# if __name__ == "__main__":
-#     # Für Geräte im selben WLAN erreichbar; Debug aus Sicherheitsgründen aus.
-#     app.run(host="0.0.0.0", port=5001, debug=False)
+# ===================================================================
+# 11. Start
+# ===================================================================
+# Datenbank vorbereiten. Steht hier unten, damit alle Funktionen oben
+# schon definiert sind.
+init_db()
 
 if __name__ == "__main__":
+    # debug=True: automatischer Neustart bei Codeänderungen + Fehlerseite
+    # im Browser. Für den echten Betrieb auf debug=False stellen.
     app.run(debug=True)

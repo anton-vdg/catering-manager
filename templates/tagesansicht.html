@@ -1,3 +1,11 @@
+<!--
+  tagesansicht.html – alle Bestellungen eines Tages
+  Gefüllt von der Route day_view() in app.py.
+
+  Variablen aus Python:
+    selected_date = "2026-11-12"
+    orders        = Liste von Bestellungen, jede mit 'items' und 'total_cents'
+-->
 <!doctype html>
 <html lang="de">
   <head>
@@ -15,9 +23,14 @@
         <a href="/produkte">Produkte</a>
       </nav>
     </header>
-    
+
     <main>
       <h2>Tagesansicht</h2>
+
+      <!--
+        method="get": das Datum landet in der URL (/tagesansicht?date=...).
+        Richtig hier, weil nichts geändert wird – nur angezeigt.
+      -->
       <form method="get" action="/tagesansicht">
         <label for="date">Datum</label>
         <input id="date" name="date" type="date" value="{{ selected_date }}">
@@ -29,13 +42,16 @@
           {% for order in orders %}
             <article class="bestellung">
               <h3>{{ order['order_time'] }} Uhr · {{ order['customer_name'] }}</h3>
+
               <p>
                 {{ 'Abholung' if order['fulfillment_type'] == 'abholung' else 'Lieferung' }}
                 {% if order['delivery_address'] %}· {{ order['delivery_address'] }}{% endif %}
               </p>
+
               <p>
-                {% if order['customer_phone'] %} {{ order['customer_phone'] }}{% endif %}
+                {% if order['customer_phone'] %}{{ order['customer_phone'] }}{% endif %}
               </p>
+
               <ul>
                 {% for item in order['items'] %}
                   <li>
@@ -44,25 +60,32 @@
                   </li>
                 {% endfor %}
               </ul>
+
               <p class="gesamtbetrag">
                 Gesamtbetrag: {{ '%.2f'|format(order['total_cents'] / 100) }} €
               </p>
-              <div class = "button-gruppe">
-                <form
-                  class="loeschformular"
-                  method="post"
-                  action="{{ url_for('delete_order', order_id=order['id']) }}"
-                  onsubmit="return confirm('Diese Bestellung wirklich löschen?')"
-                >
+
+              <div class="button-gruppe">
+                <!-- Bestellung löschen: POST, weil Daten geändert werden. -->
+                <form class="loeschformular"
+                      method="post"
+                      action="{{ url_for('delete_order', order_id=order['id']) }}"
+                      onsubmit="return confirm('Diese Bestellung wirklich löschen?')">
+                  <!-- Nach dem Löschen zurück zum selben Tag. -->
                   <input type="hidden" name="date" value="{{ selected_date }}">
-                  <button class="loeschbutton" type="submit" title="Bestellung löschen">🗑️</button>
+                  <button class="loeschbutton" type="submit"
+                          title="Bestellung löschen">🗑️</button>
                 </form>
-                <form class="pdfformular" method="get" action="{{ url_for('order_pdf', order_id=order['id']) }}" target="_blank"
-                >
-                  <input type="hidden" name="date" value="{{ selected_date }}">
-                  <button class="pdfbutton" type="submit" title="Bestellung als PDF öffnen">📄</button>
+
+                <!-- PDF im neuen Tab öffnen. -->
+                <form class="pdfformular"
+                      method="get"
+                      action="{{ url_for('order_pdf', order_id=order['id']) }}"
+                      target="_blank">
+                  <button class="pdfbutton" type="submit"
+                          title="Bestellung als PDF öffnen">📄</button>
                 </form>
-            </div>
+              </div>
             </article>
           {% endfor %}
         </section>

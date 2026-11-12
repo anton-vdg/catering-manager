@@ -1,3 +1,16 @@
+-- ================================================================
+-- produktliste.sql – Startinhalte aus der Preisliste 2026
+-- Wird von init_db() in app.py eingespielt.
+--
+-- INSERT OR IGNORE heißt: "füge ein, außer die Zeile gibt es schon".
+-- Mehrfaches Ausführen legt also nichts doppelt an. Neu angelegte
+-- Produkte über die App bleiben unberührt.
+--
+-- Preise in Cent:   18,00 € = 1800
+-- tax_rate:          7 = Speisen (ermäßigt), 19 = Non-Food (voller Satz)
+-- price_cents = 0   = "Preis auf Anfrage"
+-- ================================================================
+
 INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES
   ( 1, 'Spanferkel',             10),
   ( 2, 'Braten',                 20),
@@ -12,9 +25,6 @@ INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES
   (11, 'Partyzubehör',          110),
   (12, 'Geflügel & Weihnachten', 120);
 
--- Preise in Cent (18,00 € = 1800), damit nicht mit Kommazahlen gerechnet wird.
--- tax_rate: 7 = Speisen (ermäßigt), 19 = Non-Food (voller Satz).
--- price_cents = 0 bedeutet "Preis auf Anfrage".
 INSERT OR IGNORE INTO products (name, price_cents, unit, tax_rate, category_id) VALUES
   -- Spanferkel
   ('Spanferkel 10 kg (ca. 10–12 Personen)', 18000, 'Stück',  7,  1),
@@ -22,7 +32,7 @@ INSERT OR IGNORE INTO products (name, price_cents, unit, tax_rate, category_id) 
   ('Spanferkel 20 kg (ca. 30–35 Personen)', 28000, 'Stück',  7,  1),
   ('Spanferkel zerlegen vor Ort',            3000, 'Stück',  7,  1),
 
-  -- Braten
+  -- Braten (Preise aus der PDF erschlossen – bei Bedarf in der App korrigieren)
   ('Original bayerische Schweinshaxe (ca. 1,2 kg)', 1300,  'Stück', 7, 2),
   ('Lachs im Spinatblätterteig (ca. 3 kg)',        10000,  'Stück', 7, 2),
   ('Prager Schinken mit Kruste (ca. 4 kg)',         9000,  'Stück', 7, 2),
@@ -35,7 +45,7 @@ INSERT OR IGNORE INTO products (name, price_cents, unit, tax_rate, category_id) 
   ('Dicke Grillrippchen in scharfer Soße',          2000,  'Kilo',  7, 2),
   ('Ofenfrisches Brathähnchen (ganz)',              1200,  'Stück', 7, 2),
 
-  -- Beilagen
+  -- Beilagen (im PDF unter "Salate" geführt, inhaltlich Beilagen)
   ('Bratkartoffeln (ab 3 kg)',   1000, 'Kilo',  7, 3),
   ('Salzkartoffeln (ab 2 kg)',   1000, 'Kilo',  7, 3),
   ('Sauerkraut (ab 2 kg)',       1000, 'Kilo',  7, 3),

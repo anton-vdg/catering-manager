@@ -1,3 +1,8 @@
+<!--
+  home.html – Startseite
+  Wird von der Route home() in app.py geladen.
+  Die Logik (Produktsuche, Mengen, Summe) steckt in order.js.
+-->
 <!doctype html>
 <html lang="de">
   <head>
@@ -19,11 +24,17 @@
     <main>
       <h2>Neue Bestellung</h2>
 
+      <!--
+        Diese <form> wird NICHT normal abgeschickt.
+        order.js fängt das Absenden ab (preventDefault) und schickt die
+        Daten als JSON an /api/orders.
+      -->
       <form id="order-form">
         <label for="kundenname">Kundenname</label>
         <input id="kundenname" name="kundenname" type="text" required>
 
         <label for="adresse">Lieferadresse</label>
+        <!-- textarea statt input, weil sie mehrzeilig sein kann. -->
         <textarea id="adresse" name="adresse" rows="1"></textarea>
 
         <label for="telefon">Telefonnummer</label>
@@ -37,27 +48,41 @@
 
         <fieldset>
           <legend>Art der Bestellung</legend>
+          <!--
+            Beide Radio-Buttons haben name="art".
+            Dadurch kann immer nur einer ausgewählt sein.
+            order.js liest den gewählten mit: input[name="art"]:checked
+          -->
           <label><input name="art" type="radio" value="abholung" required> Abholung</label>
           <label><input name="art" type="radio" value="lieferung"> Lieferung</label>
         </fieldset>
 
         <label for="produktsuche">Produkt suchen</label>
         <input id="produktsuche" type="search" autocomplete="off">
+
+        <!-- order.js füllt dieses div mit den Suchergebnissen (Checkboxen). -->
         <div id="suchergebnisse" class="suchergebnisse"></div>
 
         <section class="ausgewaehlte-produkte">
           <h3>Bestellte Produkte</h3>
+
+          <!-- order.js baut hier pro Produkt eine Zeile mit Mengenfeld ein. -->
           <div id="bestellpositionen">
             <p>Noch kein Produkt ausgewählt.</p>
           </div>
+
+          <!-- Summen werden von updateSummary() in order.js gesetzt. -->
           <p id="gesamtbetrag" class="gesamtbetrag">Gesamtbetrag: 0,00 €</p>
           <p id="mwst-betrag" class="mwst-betrag">MwSt.: 0,00 €</p>
         </section>
 
         <button type="submit">Bestellung speichern</button>
+
+        <!-- Rückmeldung nach dem Speichern, gesetzt von order.js. -->
         <p id="speicherhinweis"></p>
       </form>
     </main>
+
     <script src="/order.js"></script>
   </body>
 </html>

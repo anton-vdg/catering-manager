@@ -1,2 +1,10 @@
+# requirements.txt – externe Pakete
+#
+# Installation:  pip install -r requirements.txt
+#
+# Das "==" bedeutet "genau diese Version". Damit installiert jeder Rechner
+# dieselbe Fassung, und ein Update kann die App nicht unbemerkt verändern.
+# Will man aktualisieren, ändert man die Zahl hier und installiert erneut.
+
 Flask==3.1.2
 reportlab==5.1.0

@@ -1,146 +1,256 @@
-body {
-  margin: 0;
-  font-family: Comic Sans MS, Comic Sans, sans-serif;
-  background-color: #f5f5f0;
-  color: #26352d;
-}
+/* =====================================================================
+   style.css – das Aussehen aller Seiten
+   Ausgeliefert von der Route stylesheet() in app.py.
+   Eingebunden in allen HTML-Dateien über:
+     <link rel="stylesheet" href="/style.css">
+   ===================================================================== */
 
-header {
-  background-color: #CE1213;
-  color: white;
-  padding: 20px;
-}
 
-header h1 {
-  margin: 0 0 12px;
-}
-
-nav a {
-  color: white;
-  margin-right: 16px;
-  text-decoration: none;
-}
-
-main {
-  padding: 32px;
-}
-
-form {
-  display: grid;
-  gap: 8px;
-  max-width: 500px;
-}
-
-input,
-textarea,
-button {
-  font: inherit;
-  padding: 8px;
-}
-
-fieldset {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0;
-}
-
-button {
-  background-color: #d97941;
-  border: 0;
-  color: white;
-  cursor: pointer;
-}
-
-.suchergebnisse,
-.ausgewaehlte-produkte {
-  border: 1px solid #c9c9c0;
-  padding: 12px;
-}
-
-.produkt-treffer,
-.bestellposition {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0;
-}
-
-.bestellposition input {
-  width: 55px;
-}
-
-.gesamtbetrag {
-  font-size: 1.2rem;
-  font-weight: bold;
-}
-
-.bestellungen {
-  display: grid;
-  gap: 16px;
-  margin-top: 24px;
-}
-
-.bestellung {
-  background-color: white;
-  border-left: 6px solid #CE1213;
-  padding: 16px;
-}
-
-.bestellung h3 {
-  margin-top: 0;
-}
-
-.loeschformular {
-  display: block;
-}
-
-.pdfbutton,
-.loeschbutton {
-  width: 40px;          /* Feste Breite für Quadratform */
-  height: 40px;         /* Feste Höhe für Quadratform */
-  font-size: 1.2rem;    /* Macht das Symbol etwas größer */
-  padding: 0;           /* Entfernt das Standard-Padding */
-  display: inline-flex; /* Aktiviert Flexbox zum Zentrieren */
-  align-items: center;  /* Zentriert das Symbol vertikal */
-  justify-content: center; /* Zentriert das Symbol horizontal */
-  border-radius: 4px;   /* Optionale leicht abgerundete Ecken */
-}
-
-/* Farben bleiben wie gehabt */
-.pdfbutton {
-  background-color: #d97941;
-}
-
-.loeschbutton {
-  background-color: #a81414;
-}
-
-.button-gruppe {
-  display: flex;
-  gap: 8px;          /* Abstand zwischen den Buttons */
-  margin-top: 12px;  /* Abstand zum Text darüber */
-}
-
-/* Bearbeiten-Knopf soll wie die anderen aussehen, ist aber ein <a>. */
-.bearbeitenbutton {
-  width: 40px;
-  height: 40px;
-  font-size: 1.2rem;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  background-color: #d97941;
-  color: white;
-  text-decoration: none;
-}
-
-/* Der Abbrechen-Link neben "Speichern" */
-.abbrechen {
-  padding: 8px 16px;
-  background-color: #c9c9c0;
-  color: #26352d;
-  text-decoration: none;
-  border-radius: 4px;
-}
+/* ---------------------------------------------------------------------
+   Grundgerüst
+   --------------------------------------------------------------------- */
+   body {
+    margin: 0;
+    font-family: Comic Sans MS, Comic Sans, sans-serif;
+    background-color: #f5f5f0;   /* heller Hintergrund, damit weiße Karten auffallen */
+    color: #26352d;              /* dunkles Grün statt reinem Schwarz */
+  }
+  
+  header {
+    background-color: #CE1213;   /* Firmenrot */
+    color: white;
+    padding: 20px;
+  }
+  
+  header h1 {
+    margin: 0 0 12px;
+  }
+  
+  /* Navigation: Links ohne Unterstreichung, mit Abstand. */
+  nav a {
+    color: white;
+    margin-right: 16px;
+    text-decoration: none;
+  }
+  
+  main {
+    padding: 32px;
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Formulare
+     --------------------------------------------------------------------- */
+  form {
+    display: grid;        /* ordnet die Kinder untereinander an */
+    gap: 8px;             /* Abstand zwischen den Feldern */
+    max-width: 500px;     /* verhindert, dass Felder über die ganze Seite laufen */
+  }
+  
+  input,
+  textarea,
+  button {
+    font: inherit;        /* übernimmt die Schrift vom body (Comic Sans) */
+    padding: 8px;
+  }
+  
+  /* Pflichtfeld-Prüfung durch den Browser soll nicht blau leuchten. */
+  input:invalid:not(:placeholder-shown) {
+    border-color: #b42318;
+  }
+  
+  fieldset {
+    display: grid;
+    gap: 8px;
+    margin: 8px 0;
+  }
+  
+  button {
+    background-color: #d97941;   /* orange = Aktion */
+    border: 0;
+    color: white;
+    cursor: pointer;             /* Hand statt Pfeil */
+  }
+  
+  /* ---------------------------------------------------------------------
+     Feldbreiten
+  
+     Ohne diese Regel nimmt der Browser für ein Textfeld eine Standardbreite
+     von etwa 20 Zeichen – das wirkt sehr schmal.
+     box-sizing: border-box sorgt dafür, dass das 8px-Padding INNERHALB
+     der 100% bleibt und das Feld nicht rechts herausragt.
+     --------------------------------------------------------------------- */
+  input[type="text"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="date"],
+  input[type="time"],
+  textarea,
+  select {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  /* Das Filter-Dropdown auf der Produkteseite soll kompakt bleiben. */
+  .kategorie-filter select {
+    width: auto;
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Produktsuche und Bestellliste
+     --------------------------------------------------------------------- */
+  .suchergebnisse,
+  .ausgewaehlte-produkte {
+    border: 1px solid #c9c9c0;
+    padding: 12px;
+  }
+  
+  /* Eine Zeile pro gefundenem Produkt bzw. pro Bestellposition. */
+  .produkt-treffer,
+  .bestellposition {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+  }
+  
+  /* Mengenfeld schmal halten – eigene Regel, überschreibt die 100% oben. */
+  .bestellposition input {
+    width: 55px;
+  }
+  
+  .gesamtbetrag {
+    font-size: 1.2rem;
+    font-weight: bold;
+  }
+  
+  .mwst-betrag {
+    font-size: 0.95rem;
+    color: #5a6b62;   /* zurückhaltender, weil Nebeninformation */
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Tagesansicht: eine Karte pro Bestellung
+     --------------------------------------------------------------------- */
+  .bestellungen {
+    display: grid;
+    gap: 16px;
+    margin-top: 24px;
+  }
+  
+  .bestellung {
+    background-color: white;
+    border-left: 6px solid #CE1213;  /* roter Balken links */
+    padding: 16px;
+  }
+  
+  .bestellung h3 {
+    margin-top: 0;
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Knöpfe in Quadratform (PDF, Löschen, Bearbeiten)
+     --------------------------------------------------------------------- */
+  .loeschformular {
+    display: block;
+  }
+  
+  .pdfbutton,
+  .loeschbutton {
+    width: 40px;
+    height: 40px;
+    font-size: 1.2rem;          /* macht das Emoji größer */
+    padding: 0;                 /* entfernt das Standard-Padding */
+    display: inline-flex;       /* Flexbox zum Zentrieren des Symbols */
+    align-items: center;        /* vertikal mittig */
+    justify-content: center;    /* horizontal mittig */
+    border-radius: 4px;
+  }
+  
+  .pdfbutton {
+    background-color: #d97941;
+  }
+  
+  .loeschbutton {
+    background-color: #a81414;  /* dunkleres Rot = destruktiv */
+  }
+  
+  /* Der Bearbeiten-Knopf ist ein <a>, muss aber wie ein Button aussehen. */
+  .bearbeitenbutton {
+    width: 40px;
+    height: 40px;
+    font-size: 1.2rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background-color: #d97941;
+    color: white;
+    text-decoration: none;      /* keine Unterstreichung */
+  }
+  
+  /* Gruppe von Knöpfen nebeneinander. */
+  .button-gruppe {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Kategorie-Filter auf der Produkteseite
+     --------------------------------------------------------------------- */
+  .kategorie-filter {
+    display: flex;        /* Label und Dropdown nebeneinander */
+    align-items: center;
+    gap: 8px;
+    max-width: none;      /* überschreibt das max-width: 500px von form */
+    margin-bottom: 16px;
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Tabellen (Produkteliste)
+     --------------------------------------------------------------------- */
+  table {
+    border-collapse: collapse;   /* keine doppelten Linien zwischen Zellen */
+    margin-bottom: 24px;
+  }
+  
+  th,
+  td {
+    padding: 0.3rem 0.8rem;
+    text-align: left;
+    border-bottom: 1px solid #e0e0d8;
+  }
+  
+  th {
+    font-size: 0.9rem;
+    color: #5a6b62;
+  }
+  
+  
+  /* ---------------------------------------------------------------------
+     Rückmeldungen
+     --------------------------------------------------------------------- */
+  .hinweis {
+    color: #1a7f37;   /* grün = hat geklappt */
+  }
+  
+  .fehler {
+    color: #b42318;   /* rot = Fehler */
+  }
+  
+  /* Abbrechen-Link neben dem Speichern-Knopf. */
+  .abbrechen {
+    padding: 8px 16px;
+    background-color: #c9c9c0;
+    color: #26352d;
+    text-decoration: none;
+    border-radius: 4px;
+  }

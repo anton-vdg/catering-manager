@@ -1,3 +1,14 @@
+<!--
+  product_edit.html – ein Produkt bearbeiten
+  Gefüllt von der Route produkt_bearbeiten() in app.py.
+  Bekommt POST von derselben Route zurück.
+
+  Variablen aus Python:
+    product           = {id, name, unit, price_text, tax_rate, category_id}
+    categories        = alle Kategorien für das Dropdown
+    selected_category = die Kategorie, aus der man kam (für den Rücksprung)
+    fehler            = Fehlermeldung, falls das Speichern scheiterte
+-->
 <!doctype html>
 <html lang="de">
   <head>
@@ -21,26 +32,27 @@
 
       {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
 
-      {#
+      <!--
         method="post" schickt die Änderungen an dieselbe Route.
-        Das Hidden-Feld sorgt dafür, dass wir nach dem Speichern wieder
-        in der vorher gewählten Kategorie landen.
-      #}
-      <form method="post"
-            action="/produkte/{{ product['id'] }}/bearbeiten">
+        Die Produkt-ID steckt in der URL (action), nicht in einem Feld.
+      -->
+      <form method="post" action="/produkte/{{ product['id'] }}/bearbeiten">
+
+        <!-- Damit wir nach dem Speichern in die alte Kategorie zurückkehren. -->
         {% if selected_category %}
           <input type="hidden" name="kategorie" value="{{ selected_category }}">
         {% endif %}
 
         <p>
           <label for="name">Name</label><br>
-          {# value=... füllt das Feld mit dem bisherigen Namen vor. #}
+          <!-- value=... füllt das Feld mit dem bisherigen Namen. -->
           <input type="text" id="name" name="name"
-                 value="{{ product['name'] }}" size="40" required>
+                 value="{{ product['name'] }}" required>
         </p>
 
         <p>
           <label for="price">Preis in €</label><br>
+          <!-- price_text ist der vorbereitete Preis im Format "4,50". -->
           <input type="text" id="price" name="price"
                  value="{{ product['price_text'] }}"
                  inputmode="decimal" placeholder="z. B. 4,50" required>
@@ -66,7 +78,11 @@
         <p>
           <label for="tax_rate">MwSt.-Satz</label><br>
           <select id="tax_rate" name="tax_rate">
-            {# selected markiert den aktuell gespeicherten Wert. #}
+            <!--
+              |string macht aus 7 den Text "7". Nötig, weil tax_rate
+              beim ersten Anzeigen eine Zahl ist, nach einem Fehler
+              aber ein Text aus dem Formular.
+            -->
             <option value="7"  {% if product['tax_rate']|string == '7'  %}selected{% endif %}>7 % (Speisen)</option>
             <option value="19" {% if product['tax_rate']|string == '19' %}selected{% endif %}>19 % (Non-Food)</option>
           </select>
@@ -77,6 +93,7 @@
           <select id="category_id" name="category_id">
             <option value="">– keine –</option>
             {% for k in categories %}
+              <!-- Vorauswahl: die aktuell gespeicherte Kategorie. -->
               <option value="{{ k['id'] }}"
                       {% if product['category_id'] == k['id'] %}selected{% endif %}>
                 {{ k['name'] }}
@@ -87,7 +104,11 @@
 
         <div class="button-gruppe">
           <button type="submit">Speichern</button>
-          {# Abbrechen ist ein einfacher Link zurück zur Liste. #}
+
+          <!--
+            Abbrechen ist ein Link, kein Formular: es wird nichts abgeschickt.
+            Der Kategorie-Parameter hält den Filter beim Zurückgehen.
+          -->
           <a class="abbrechen"
              href="/produkte{% if selected_category %}?kategorie={{ selected_category }}{% endif %}">
             Abbrechen
