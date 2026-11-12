@@ -791,10 +791,17 @@ def day_view():
     except ValueError:
         selected_date = date.today().isoformat()
 
+    # Für die Vor/Zurück-Links: der Tag davor und danach.
+    # date.fromisoformat() ist oben schon geprüft, deshalb hier sicher.
+    tag = date.fromisoformat(selected_date)
+
     return render_template(
         "tagesansicht.html",
         selected_date=selected_date,
         orders=get_orders_for_day(selected_date),
+        hinweis=request.args.get("hinweis"),
+        vorheriger_tag=(tag - timedelta(days=1)).isoformat(),
+        naechster_tag=(tag + timedelta(days=1)).isoformat(),
     )
 
 

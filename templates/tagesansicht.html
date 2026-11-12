@@ -37,6 +37,19 @@
         <button type="submit">Anzeigen</button>
       </form>
 
+      <!--
+        Vor/Zurück-Navigation. Die Ziele sind fertige URLs aus Python,
+        kein JavaScript – einfache Links reichen für einen Tageswechsel.
+      -->
+      <p class="wochen-nav">
+        <a href="/tagesansicht?date={{ vorheriger_tag }}" title="Vorheriger Tag">
+          ← Vorheriger Tag
+        </a>
+        <a href="/tagesansicht?date={{ naechster_tag }}" title="Nächster Tag">
+          Nächster Tag →
+        </a>
+      </p>
+
       {% if orders %}
         <section class="bestellungen">
           {% for order in orders %}
