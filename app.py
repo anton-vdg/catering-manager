@@ -18,6 +18,7 @@ from datetime import date           # heutiges Datum für die Tagesansicht
 from io import BytesIO              # PDF im Arbeitsspeicher statt auf Platte
 from pathlib import Path            # Dateipfade unabhängig vom Betriebssystem
 from xml.sax.saxutils import escape # Sonderzeichen (<, >, &) für PDFs entschärfen
+from datetime import date, timedelta
 
 # Flask = das Web-Framework. Ohne Flask gäbe es keine Routen und keine Templates.
 from flask import (
@@ -296,6 +297,68 @@ def get_order_details(order_id):
 
     total_cents = sum(item["quantity"] * item["unit_price_cents"] for item in items)
     return order, items, total_cents
+
+def week_range(datum):
+    """
+    Gibt (Montag, Sonntag) der Woche zurück, in der `datum` liegt.
+
+    date.weekday() liefert 0 für Montag, 6 für Sonntag.
+    Ein Datum minus seinen weekday-Wert landet immer auf Montag.
+    Beispiel: Mittwoch, 12.11.2026 -> weekday()=2
+              12.11. - 2 Tage = 10.11. = Montag
+    """
+    montag = datum - timedelta(days=datum.weekday())
+    sonntag = montag + timedelta(days=6)
+    return montag, sonntag
+
+
+def get_week_summary(montag, sonntag):
+    """
+    Summiert alle Positionen einer Woche pro Produkt.
+
+    montag/sonntag sind ISO-Text wie "2026-11-10", damit BETWEEN
+    auf dem Textvergleich funktioniert (SQLite-Datumsspeicherung).
+
+    Verwendet in: week_view()
+
+    Wichtig: SUM(quantity) summiert NUR Positionen, die es in dieser
+    Woche tatsächlich gab. Produkte, die niemand bestellt hat, tauchen
+    nicht auf – das ist gewollt, sonst wäre die Liste riesig.
+    """
+    connection = connect_db()
+
+    rows = connection.execute(
+        """
+        SELECT p.id, p.name, p.unit,
+               COALESCE(c.name, 'Ohne Kategorie') AS category_name,
+               COALESCE(c.sort_order, 9999)       AS category_sort,
+               SUM(oi.quantity)                  AS total_quantity,
+               SUM(oi.quantity * oi.unit_price_cents) AS total_cents
+        FROM order_items oi
+        JOIN orders   o ON o.id = oi.order_id
+        JOIN products p ON p.id = oi.product_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE o.order_date BETWEEN ? AND ?
+        GROUP BY p.id
+        ORDER BY COALESCE(c.sort_order, 9999), p.name
+        """,
+        (montag, sonntag),
+    ).fetchall()
+
+    # Zusatzinfo für die Kopfzeile.
+    bestellungen = connection.execute(
+        "SELECT COUNT(*) FROM orders WHERE order_date BETWEEN ? AND ?",
+        (montag, sonntag),
+    ).fetchone()[0]
+
+    kunden = connection.execute(
+        "SELECT COUNT(DISTINCT customer_name) FROM orders "
+        "WHERE order_date BETWEEN ? AND ?",
+        (montag, sonntag),
+    ).fetchone()[0]
+
+    connection.close()
+    return rows, bestellungen, kunden
 
 
 # ===================================================================
@@ -732,6 +795,57 @@ def day_view():
         "tagesansicht.html",
         selected_date=selected_date,
         orders=get_orders_for_day(selected_date),
+    )
+
+
+@app.route("/wochenansicht")
+def week_view():
+    """
+    Aggregierte Mengen pro Produkt für eine Kalenderwoche.
+    Datei: wochenansicht.html
+
+    Datum aus der URL:  /wochenansicht?date=2026-11-12
+    Daraus wird die Woche ermittelt (Montag..Sonntag), in der es liegt.
+    Ohne Datum: aktuelle Woche.
+    """
+    datum_text = request.args.get("date", date.today().isoformat())
+
+    try:
+        datum = date.fromisoformat(datum_text)
+    except ValueError:
+        datum = date.today()
+
+    montag, sonntag = week_range(datum)
+
+    rows, bestellungen, kunden = get_week_summary(
+        montag.isoformat(), sonntag.isoformat()
+    )
+
+    # Flache Liste wie auf der Produkteseite in Kategorien gruppieren.
+    gruppen = []
+    gesamt_cents = 0
+    for row in rows:
+        if not gruppen or gruppen[-1]["name"] != row["category_name"]:
+            gruppen.append({"name": row["category_name"], "produkte": []})
+        gruppen[-1]["produkte"].append(dict(row))
+        gesamt_cents += row["total_cents"]
+
+    # Vor/Zurück-Links im Template brauchen fertige URLs.
+    vorherige = (montag - timedelta(days=7)).isoformat()
+    naechste = (montag + timedelta(days=7)).isoformat()
+
+    return render_template(
+        "wochenansicht.html",
+        selected_date=datum.isoformat(),
+        montag=montag,
+        sonntag=sonntag,
+        kalenderwoche=montag.isocalendar()[1],
+        gruppen=gruppen,
+        bestellungen=bestellungen,
+        kunden=kunden,
+        gesamt_cents=gesamt_cents,
+        vorherige=vorherige,
+        naechste=naechste,
     )
 
 

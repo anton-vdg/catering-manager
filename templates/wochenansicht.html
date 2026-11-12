@@ -1,0 +1,97 @@
+<!--
+  wochenansicht.html – aggregierte Mengen einer Kalenderwoche
+  Gefüllt von der Route week_view() in app.py.
+
+  Variablen aus Python:
+    selected_date  = gewähltes Datum (damit der Datumswähler es anzeigt)
+    montag/sonntag = Datum-Objekte der Woche
+    kalenderwoche  = Zahl wie 46
+    gruppen        = [{name: "Braten", produkte: [...]}, ...]
+    bestellungen   = Anzahl Bestellungen in dieser Woche
+    kunden         = Anzahl verschiedener Kundennamen
+    gesamt_cents   = Brutto-Summe aller Positionen
+    vorherige/naechste = ISO-Datum für die Vor/Zurück-Links
+-->
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Wochenansicht – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="/wochenansicht">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+      </nav>
+    </header>
+
+    <main>
+      <h2>Wochenansicht – KW {{ kalenderwoche }}</h2>
+
+      <!-- Datumswähler: springt in die Woche des gewählten Tages. -->
+      <form method="get" action="/wochenansicht">
+        <label for="date">Woche enthält Tag</label>
+        <input id="date" name="date" type="date" value="{{ selected_date }}">
+        <button type="submit">Anzeigen</button>
+      </form>
+
+      <!-- Vor/Zurück-Navigation und Zeitraum-Anzeige. -->
+      <p class="wochen-nav">
+        <a href="/wochenansicht?date={{ vorherige }}" title="Vorherige Woche">
+          ← Vorherige
+        </a>
+        <span>
+          {{ montag.strftime('%d.%m.%Y') }} – {{ sonntag.strftime('%d.%m.%Y') }}
+        </span>
+        <a href="/wochenansicht?date={{ naechste }}" title="Nächste Woche">
+          Nächste →
+        </a>
+      </p>
+
+      <!-- Kennzahlen oben. -->
+      <p class="wochen-summary">
+        {{ bestellungen }} Bestellung{{ '' if bestellungen == 1 else 'en' }}
+        · Umsatz: {{ '%.2f'|format(gesamt_cents / 100) }} € (brutto)
+      </p>
+
+      {# Keine Bestellungen in dieser Woche? Dann Hinweis statt Tabelle. #}
+      {% if gruppen %}
+        {% for gruppe in gruppen %}
+          <h3>{{ gruppe['name'] }}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Produkt</th>
+                <th>Menge</th>
+                <th>Summe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in gruppe['produkte'] %}
+                <tr>
+                  <td>{{ p['name'] }}</td>
+                  <td>
+                    {#
+                      total_quantity ist eine Ganzzahl aus SUM().
+                      SQLite liefert bei SUM() einen Integer, deshalb
+                      brauchen wir keine Nachkommastellen.
+                    #}
+                    {{ p['total_quantity'] }} {{ p['unit'] }}
+                  </td>
+                  <td>{{ '%.2f'|format(p['total_cents'] / 100) }} €</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endfor %}
+      {% else %}
+        <p>In dieser Woche gibt es noch keine Bestellungen.</p>
+      {% endif %}
+    </main>
+  </body>
+</html>

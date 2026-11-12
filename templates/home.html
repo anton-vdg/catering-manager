@@ -16,7 +16,7 @@
       <nav>
         <a href="/">Startseite</a>
         <a href="/tagesansicht">Tagesansicht</a>
-        <a href="#">Wochenansicht</a>
+        <a href="/wochenansicht">Wochenansicht</a>
         <a href="/produkte">Produkte</a>
       </nav>
     </header>
@@ -34,8 +34,7 @@
         <input id="kundenname" name="kundenname" type="text" required>
 
         <label for="adresse">Lieferadresse</label>
-        <!-- textarea statt input, weil sie mehrzeilig sein kann. -->
-        <textarea id="adresse" name="adresse" rows="1"></textarea>
+        <input id="adresse" name="adresse" type="address" required></input>
 
         <label for="telefon">Telefonnummer</label>
         <input id="telefon" name="telefon" type="tel" required>
