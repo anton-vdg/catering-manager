@@ -1,0 +1,168 @@
+<!--
+  order_edit.html – eine bestehende Bestellung bearbeiten
+  Gefüllt von der Route order_bearbeiten() in app.py.
+
+  Variablen aus Python:
+    order    = {id, customer_name, customer_phone, delivery_address,
+                order_date, order_time, fulfillment_type}
+    items    = Liste der Positionen mit id, name, unit,
+               quantity, unit_price_cents
+    products = alle sichtbaren Produkte für das Hinzufügen-Auswahlfeld
+    fehler   = Meldung, falls das Speichern nicht geklappt hat
+-->
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Bestellung bearbeiten – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="#">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+      </nav>
+    </header>
+
+    <main>
+      <h2>Bestellung Nr. {{ order['id'] }} bearbeiten</h2>
+
+      {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
+
+      {#
+        form-breit hebt das max-width: 500px aus style.css auf,
+        damit die Tabelle Platz hat.
+      #}
+      <form class="form-breit" method="post"
+            action="/bestellungen/{{ order['id'] }}/bearbeiten">
+
+        <h3>Kundendaten</h3>
+
+        <p>
+          <label for="customer_name">Kundenname</label><br>
+          <input type="text" id="customer_name" name="customer_name"
+                 value="{{ order['customer_name'] }}" required>
+        </p>
+
+        <p>
+          <label for="customer_phone">Telefonnummer</label><br>
+          <input type="tel" id="customer_phone" name="customer_phone"
+                 value="{{ order['customer_phone'] }}" required>
+        </p>
+
+        <p>
+          <label for="delivery_address">Lieferadresse</label><br>
+          <textarea id="delivery_address" name="delivery_address"
+                    rows="1">{{ order['delivery_address'] or '' }}</textarea>
+        </p>
+
+        <p>
+          <label for="order_date">Datum</label><br>
+          <input type="date" id="order_date" name="order_date"
+                 value="{{ order['order_date'] }}" required>
+        </p>
+
+        <p>
+          <label for="order_time">Uhrzeit</label><br>
+          <input type="time" id="order_time" name="order_time"
+                 value="{{ order['order_time'] }}" required>
+        </p>
+
+        <fieldset>
+          <legend>Art der Bestellung</legend>
+          <label>
+            <input type="radio" name="fulfillment_type" value="abholung"
+                   {% if order['fulfillment_type'] == 'abholung' %}checked{% endif %} required>
+            Abholung
+          </label>
+          <label>
+            <input type="radio" name="fulfillment_type" value="lieferung"
+                   {% if order['fulfillment_type'] == 'lieferung' %}checked{% endif %}>
+            Lieferung
+          </label>
+        </fieldset>
+
+        <h3>Positionen</h3>
+
+        {% if items %}
+          <table>
+            <thead>
+              <tr>
+                <th>Produkt</th>
+                <th>Einheit</th>
+                <th>Einzelpreis</th>
+                <th>Menge</th>
+                <th>Summe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr>
+                  <td>{{ item['name'] }}</td>
+                  <td>{{ item['unit'] }}</td>
+                  {#
+                    Einzelpreis kommt aus order_items.unit_price_cents –
+                    das ist der Preis zum Bestellzeitpunkt, nicht der aktuelle.
+                  #}
+                  <td>{{ '%.2f'|format(item['unit_price_cents'] / 100) }} €</td>
+                  <td>
+                    {#
+                      Der Feldname enthält die Positions-ID: menge_7.
+                      So kann Python die Menge eindeutig zuordnen.
+                      min="0": 0 eintragen entfernt die Position.
+                    #}
+                    <input class="mengenfeld" type="number"
+                           id="menge_{{ item['id'] }}"
+                           name="menge_{{ item['id'] }}"
+                           min="0" value="{{ item['quantity'] }}">
+                  </td>
+                  <td>{{ '%.2f'|format(item['quantity'] * item['unit_price_cents'] / 100) }} €</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <p><small>
+            Menge auf <strong>0</strong> setzen entfernt die Position.
+            Feld leer lassen = unverändert.
+          </small></p>
+        {% else %}
+          <p>Diese Bestellung hat keine Positionen.</p>
+        {% endif %}
+
+        <h3>Position hinzufügen</h3>
+
+        <!--
+          Produktsuche wie auf der Startseite.
+          Die Eingabe hat kein name-Attribut und wird deshalb NICHT
+          mitgeschickt – sie dient nur dem JavaScript.
+        -->
+        <label for="produktsuche">Produkt suchen</label>
+        <input id="produktsuche" type="search" autocomplete="off">
+        <div id="suchergebnisse" class="suchergebnisse"></div>
+
+        <!--
+          Hier baut order_edit.js pro ausgewähltem Produkt eine Zeile mit
+          Mengenfeld ein. Der Name dieser Felder lautet neu_menge_<id> –
+          daran erkennt app.py die neuen Positionen.
+        -->
+        <div id="neue-positionen" class="ausgewaehlte-produkte">
+          <p id="keine-neuen">Noch kein Produkt ausgewählt.</p>
+        </div>
+
+        <div class="button-gruppe">
+          <button type="submit">Speichern</button>
+
+          {# Abbrechen: zurück zur Tagesansicht des gespeicherten Datums. #}
+          <a class="abbrechen" href="/tagesansicht?date={{ order['order_date'] }}">
+            Abbrechen
+          </a>
+        </div>
+      </form>
+    </main>
+    <script src="/order_edit.js"></script>
+  </body>
+</html>

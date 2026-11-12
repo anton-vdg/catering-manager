@@ -200,6 +200,17 @@
     gap: 8px;
     margin-top: 12px;
   }
+
+  /* Bearbeiten-Formular darf breiter werden als normale Formulare,
+   sonst wird die Positionstabelle zu eng. */
+.form-breit {
+  max-width: 900px;
+}
+
+/* Mengenfelder kompakt halten. */
+.mengenfeld {
+  width: 70px;
+}
   
   
   /* ---------------------------------------------------------------------

@@ -325,6 +325,14 @@ def order_script():
     """
     return send_from_directory(BASE_DIR, "order.js")
 
+@app.route("/order_edit.js")
+def order_edit_script():
+    """
+    Liefert das JavaScript der Bearbeiten-Seite aus.
+    Eingebunden in: order_edit.html
+    """
+    return send_from_directory(BASE_DIR, "order_edit.js")
+
 
 # ===================================================================
 # 7. Routen: Produkte
@@ -748,6 +756,232 @@ def delete_order(order_id):
     # Zurück zur selben Tagesansicht, nicht zur Startseite.
     return redirect(url_for("day_view", date=selected_date))
 
+
+@app.route("/bestellungen/<int:order_id>/bearbeiten", methods=["GET", "POST"])
+def order_bearbeiten(order_id):
+    """
+    Bestellung bearbeiten: Stammdaten, Mengen, Positionen hinzufügen/entfernen.
+    Datei: order_edit.html
+    Aufgerufen von: dem ✏️-Knopf in tagesansicht.html.
+
+    GET  = Formular mit den gespeicherten Werten zeigen
+    POST = Änderungen speichern
+    """
+    connection = connect_db()
+
+    order = connection.execute(
+        "SELECT * FROM orders WHERE id = ?", (order_id,)
+    ).fetchone()
+
+    if order is None:
+        connection.close()
+        return redirect(url_for("day_view"))
+
+    # Bestehende Positionen mit Produktnamen.
+    items = connection.execute(
+        """
+        SELECT order_items.id, order_items.product_id, order_items.quantity,
+               order_items.unit_price_cents,
+               products.name, products.unit
+        FROM order_items
+        JOIN products ON products.id = order_items.product_id
+        WHERE order_items.order_id = ?
+        ORDER BY order_items.id
+        """,
+        (order_id,),
+    ).fetchall()
+
+    # Alle sichtbaren Produkte für das Auswahlfeld "Position hinzufügen".
+    products = connection.execute(
+        "SELECT id, name, price_cents, unit FROM products "
+        "WHERE active = 1 ORDER BY name"
+    ).fetchall()
+
+    def zeige_formular(werte, positionen, fehler_text=None):
+        """
+        Rendert order_edit.html.
+        werte      = anzuzeigende Stammdaten
+        positionen = anzuzeigende Positionen
+        Beim GET kommen beide aus der Datenbank, beim Fehlerfall aus dem
+        Formular bzw. aus der unveränderten Datenbank.
+        """
+        connection.close()
+        return render_template(
+            "order_edit.html",
+            order=werte,
+            items=positionen,
+            products=products,
+            fehler=fehler_text,
+        )
+
+    # ---------- GET: nur anzeigen ----------
+    if request.method == "GET":
+        return zeige_formular(dict(order), [dict(i) for i in items])
+
+    # ---------- POST: speichern ----------
+    customer_name = request.form.get("customer_name", "").strip()
+    customer_phone = request.form.get("customer_phone", "").strip()
+    delivery_address = request.form.get("delivery_address", "").strip()
+    order_date = request.form.get("order_date", "").strip()
+    order_time = request.form.get("order_time", "").strip()
+    fulfillment_type = request.form.get("fulfillment_type", "").strip()
+
+    # Die eingegebenen Stammdaten – damit bei einem Fehler nichts verloren geht.
+    neue_werte = {
+        "id": order_id,
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
+        "delivery_address": delivery_address,
+        "order_date": order_date,
+        "order_time": order_time,
+        "fulfillment_type": fulfillment_type,
+    }
+
+    # ---- Prüfungen VOR dem Schreiben ----
+    if not customer_name or not customer_phone or not order_date or not order_time:
+        return zeige_formular(neue_werte, [dict(i) for i in items],
+                              "Bitte Name, Telefon, Datum und Uhrzeit ausfüllen.")
+
+    if fulfillment_type not in {"abholung", "lieferung"}:
+        return zeige_formular(neue_werte, [dict(i) for i in items],
+                              "Bitte Abholung oder Lieferung wählen.")
+
+    try:
+        date.fromisoformat(order_date)
+    except ValueError:
+        return zeige_formular(neue_werte, [dict(i) for i in items],
+                              "Ungültiges Datum.")
+
+    # ---- Alles in einer Transaktion schreiben ----
+    try:
+        connection.execute(
+            """
+            UPDATE orders
+            SET customer_name = ?, customer_phone = ?, delivery_address = ?,
+                order_date = ?, order_time = ?, fulfillment_type = ?
+            WHERE id = ?
+            """,
+            (customer_name, customer_phone, delivery_address,
+             order_date, order_time, fulfillment_type, order_id),
+        )
+
+        # Bestehende Positionen: Menge ändern, 0 bedeutet "entfernen".
+        # Das Feld heißt im HTML "menge_<id>" – z. B. menge_7.
+        for item in items:
+            roh = request.form.get(f"menge_{item['id']}", "").strip()
+
+            # Feld geleert -> unverändert lassen (kein versehentliches Löschen).
+            if not roh:
+                continue
+
+            try:
+                menge = int(roh)
+            except ValueError:
+                continue
+
+            if menge < 0:
+                continue
+
+            if menge == 0:
+                connection.execute(
+                    "DELETE FROM order_items WHERE id = ?", (item["id"],)
+                )
+            else:
+                # WICHTIG: unit_price_cents bleibt unangetastet.
+                # Der damals gespeicherte Preis gilt weiter, auch wenn sich
+                # der Produktpreis inzwischen geändert hat.
+                connection.execute(
+                    "UPDATE order_items SET quantity = ? WHERE id = ?",
+                    (menge, item["id"]),
+                )
+
+        # ---- Neue Positionen aus der Produktsuche ----
+        # order_edit.js legt für jedes hinzugefügte Produkt ein Feld
+        # "neu_menge_<produkt_id>" an. Wir suchen alle solche Felder.
+        for feldname, wert in list(request.form.items()):
+            if not feldname.startswith("neu_menge_"):
+                continue
+
+            # Aus "neu_menge_5" die 5 herausschneiden.
+            try:
+                produkt_id = int(feldname[len("neu_menge_"):])
+                menge = int(wert)
+            except ValueError:
+                continue
+
+            if menge < 1:
+                continue
+
+            produkt = connection.execute(
+                "SELECT price_cents FROM products WHERE id = ? AND active = 1",
+                (produkt_id,),
+            ).fetchone()
+
+            if produkt is None:
+                continue
+
+            # Ist das Produkt schon in dieser Bestellung?
+            # Dann nur die Menge erhöhen und den DAMALIGEN Preis stehen lassen.
+            vorhanden = connection.execute(
+                "SELECT id FROM order_items WHERE order_id = ? AND product_id = ?",
+                (order_id, produkt_id),
+            ).fetchone()
+
+            if vorhanden:
+                connection.execute(
+                    "UPDATE order_items SET quantity = quantity + ? WHERE id = ?",
+                    (menge, vorhanden["id"]),
+                )
+            else:
+                # Neue Position: hier gilt der HEUTIGE Preis als Snapshot.
+                connection.execute(
+                    """
+                    INSERT INTO order_items
+                        (order_id, product_id, quantity, unit_price_cents)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (order_id, produkt_id, menge, produkt["price_cents"]),
+                )
+
+        # Eine Bestellung ohne Positionen ergibt keinen Sinn.
+        anzahl = connection.execute(
+            "SELECT COUNT(*) FROM order_items WHERE order_id = ?", (order_id,)
+        ).fetchone()[0]
+
+        if anzahl == 0:
+            raise ValueError("Eine Bestellung braucht mindestens eine Position.")
+
+        connection.commit()
+
+    except (ValueError, sqlite3.IntegrityError) as fehler:
+        # rollback() macht alle Änderungen dieser Transaktion rückgängig –
+        # kein halb gespeicherter Zustand.
+        connection.rollback()
+
+        # Positionen neu laden, weil die Änderungen gerade verworfen wurden.
+        items = connection.execute(
+            """
+            SELECT order_items.id, order_items.product_id, order_items.quantity,
+                   order_items.unit_price_cents,
+                   products.name, products.unit
+            FROM order_items
+            JOIN products ON products.id = order_items.product_id
+            WHERE order_items.order_id = ?
+            ORDER BY order_items.id
+            """,
+            (order_id,),
+        ).fetchall()
+
+        return zeige_formular(neue_werte, [dict(i) for i in items], str(fehler))
+
+    connection.close()
+
+    # Zur Tagesansicht des (evtl. geänderten) Datums springen.
+    return redirect(url_for(
+        "day_view",
+        date=order_date,
+        hinweis=f"Bestellung Nr. {order_id} wurde gespeichert.",
+    ))
 
 # ===================================================================
 # 10. PDF

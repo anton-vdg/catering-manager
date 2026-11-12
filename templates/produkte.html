@@ -1,11 +1,12 @@
 <!--
   produkte.html – Produktübersicht
   Gefüllt von der Route products() in app.py.
+
   Variablen aus Python:
-    gruppen          = [ {name: "Braten", produkte: [...]}, ... ]
-    categories       = alle Kategorien für die Dropdowns
-    selected_category= die aktuell gefilterte Kategorie (oder None)
-    hinweis / fehler = Rückmeldungen nach einer Aktion
+    gruppen           = [ {name: "Braten", produkte: [...]}, ... ]
+    categories        = alle Kategorien für die Dropdowns
+    selected_category = gerade gefilterte Kategorie (oder None)
+    hinweis / fehler  = Rückmeldung nach einer Aktion
 -->
 <!doctype html>
 <html lang="de">
@@ -29,17 +30,13 @@
       <h2>Produkt hinzufügen</h2>
 
       <!--
-        method="post" = Daten werden im Hintergrund übertragen, nicht in der URL.
-        action="/produkte/hinzufuegen" = die Route in app.py, die sie empfängt.
+        method="post" = Daten werden im Hintergrund geschickt, nicht in der URL.
+        action = die Route in app.py, die sie empfängt.
         name="..." = unter diesem Namen liest Python den Wert (request.form).
       -->
       <form method="post" action="/produkte/hinzufuegen">
 
-        <!--
-          Hidden-Feld: unsichtbar, aber wird mitgeschickt.
-          So weiß die Route nach dem Speichern, in welche Kategorieansicht
-          sie zurückspringen soll.
-        -->
+        {# Verstecktes Feld: merkt sich den Filter für den Rücksprung. #}
         {% if selected_category %}
           <input type="hidden" name="kategorie" value="{{ selected_category }}">
         {% endif %}
@@ -64,7 +61,7 @@
           <label for="unit">Einheit</label><br>
           <!--
             datalist = Vorschlagsliste. Man kann trotzdem frei tippen,
-            anders als bei einem <select>.
+            anders als bei einem Auswahlfeld.
           -->
           <input type="text" id="unit" name="unit" value="Stück" list="einheiten">
           <datalist id="einheiten">
@@ -90,7 +87,7 @@
         <p>
           <label for="category_id">Kategorie</label><br>
           <select id="category_id" name="category_id">
-            <!-- Leerer value="" heißt in Python: category_id = None -->
+            <!-- Leerer value="" bedeutet in Python: category_id = None -->
             <option value="">– keine –</option>
             {% for k in categories %}
               <option value="{{ k['id'] }}">{{ k['name'] }}</option>
@@ -103,25 +100,25 @@
 
       <h2>Produkte</h2>
 
-      <!-- Rückmeldungen, gesetzt über ?hinweis=... bzw. ?fehler=... in der URL. -->
+      {# Rückmeldungen, gesetzt über ?hinweis=... bzw. ?fehler=... in der URL. #}
       {% if hinweis %}<p class="hinweis">{{ hinweis }}</p>{% endif %}
       {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
 
       <!--
         Filter-Dropdown.
         method="get" = die Auswahl landet in der URL: /produkte?kategorie=5
-        Das ist hier richtig, weil nichts geändert wird – es wird nur gefiltert.
+        Richtig hier, weil nichts geändert wird – es wird nur gefiltert.
         Dadurch funktionieren auch F5 und Lesezeichen.
 
-        Der Filter steht ABSICHTLICH außerhalb von {% if gruppen %}:
-        sonst wäre er nicht mehr erreichbar, wenn eine Kategorie leer ist.
+        Der Filter steht absichtlich außerhalb der Gruppen-Prüfung:
+        sonst wäre er nicht erreichbar, wenn eine Kategorie leer ist.
       -->
       <form method="get" action="/produkte" class="kategorie-filter">
         <label for="kategorie">Kategorie</label>
         <select id="kategorie" name="kategorie" onchange="this.form.submit()">
           <option value="">Alle Kategorien</option>
           {% for k in categories %}
-            <!-- 'selected' markiert den aktuell gewählten Eintrag. -->
+            {# 'selected' markiert den aktuell gewählten Eintrag. #}
             <option value="{{ k['id'] }}"
                     {% if selected_category == k['id'] %}selected{% endif %}>
               {{ k['name'] }}
@@ -132,6 +129,7 @@
         <noscript><button type="submit">Anzeigen</button></noscript>
       </form>
 
+      {# 'gruppen' ist eine Liste: pro Kategorie ein Eintrag. #}
       {% if gruppen %}
         {% for gruppe in gruppen %}
           <h3>{{ gruppe['name'] }}</h3>
@@ -150,26 +148,24 @@
                 <tr>
                   <td>{{ product['name'] }}</td>
                   <td>
-                    <!-- price_cents == 0 bedeutet "Preis auf Anfrage". -->
+                    {# price_cents == 0 bedeutet "Preis auf Anfrage". #}
                     {% if product['price_cents'] == 0 %}
                       auf Anfrage
                     {% else %}
                       {{ '%.2f'|format(product['price_cents'] / 100) }} €
                     {% endif %}
                   </td>
-                  <td>
-                    {% if product['price_cents'] != 0 %}pro {{ product['unit'] }}{% endif %}
-                  </td>
+                  <td>{% if product['price_cents'] != 0 %}pro {{ product['unit'] }}{% endif %}</td>
                   <td>{{ product['tax_rate'] }} %</td>
                   <td>
                     <div class="button-gruppe">
 
                       <!--
                         Bearbeiten ist ein LINK, kein Formular:
-                        es werden keine Daten verändert, es wird nur eine Seite geöffnet.
-                        url_for(...) baut die URL aus dem Routennamen in app.py.
-                        'kategorie=selected_category or None' hängt den Filter an –
-                        bei "Alle Kategorien" ist der Wert None und wird weggelassen.
+                        es werden keine Daten verändert, nur eine Seite geöffnet.
+                        url_for() baut die URL aus dem Routennamen in app.py.
+                        selected_category or None: bei "Alle Kategorien"
+                        ist der Wert None und wird weggelassen.
                       -->
                       <a class="bearbeitenbutton"
                          href="{{ url_for('produkt_bearbeiten',
@@ -180,7 +176,7 @@
                       <!--
                         Löschen ist ein POST-Formular – niemals ein Link.
                         Ein Link (GET) könnte von einem Browser vorausgeladen
-                        werden und würde dann Daten löschen, ohne dass jemand klickt.
+                        werden und würde dann löschen, ohne dass jemand klickt.
                       -->
                       <form method="post"
                             action="/produkte/{{ product['id'] }}/loeschen"
@@ -198,11 +194,9 @@
             </tbody>
           </table>
         {% endfor %}
-
       {% elif selected_category %}
-        <!-- Filter aktiv, aber diese Kategorie hat keine sichtbaren Produkte. -->
+        {# Filter aktiv, aber diese Kategorie hat keine sichtbaren Produkte. #}
         <p>In dieser Kategorie sind keine Produkte vorhanden.</p>
-
       {% else %}
         <p>Es sind noch keine Produkte gespeichert.</p>
       {% endif %}
