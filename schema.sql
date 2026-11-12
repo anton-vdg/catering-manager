@@ -3,7 +3,8 @@ CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
   price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
-  unit TEXT NOT NULL DEFAULT 'Stück'
+  unit TEXT NOT NULL DEFAULT 'Stück',
+  active INTEGER NOT NULL DEFAULT 1
 );
 
 -- Ein Auftrag mit Kundendaten, Termin und Art der Übergabe.
@@ -25,6 +26,6 @@ CREATE TABLE IF NOT EXISTS order_items (
   product_id INTEGER NOT NULL,
   quantity INTEGER NOT NULL CHECK (quantity > 0),
   unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
-  FOREIGN KEY (order_id) REFERENCES orders(id),
-  FOREIGN KEY (product_id) REFERENCES products(id)
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
 );

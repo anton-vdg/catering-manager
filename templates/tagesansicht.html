@@ -33,6 +33,9 @@
                 {{ 'Abholung' if order['fulfillment_type'] == 'abholung' else 'Lieferung' }}
                 {% if order['delivery_address'] %}· {{ order['delivery_address'] }}{% endif %}
               </p>
+              <p>
+                {% if order['customer_phone'] %} {{ order['customer_phone'] }}{% endif %}
+              </p>
               <ul>
                 {% for item in order['items'] %}
                   <li>

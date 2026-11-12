@@ -19,19 +19,80 @@
     <main>
       <h2>Produkte</h2>
 
+      {# Jinja-Kommentar: wird im Browser nie angezeigt. #}
+      {# Rückmeldung nach dem Hinzufügen oder Löschen. #}
+      {% if hinweis %}
+        <p class="hinweis">{{ hinweis }}</p>
+      {% endif %}
+      {% if fehler %}
+        <p class="fehler">{{ fehler }}</p>
+      {% endif %}
+
+      {# Liste aller sichtbaren Produkte. #}
       {% if products %}
-        <ul>
-          {% for product in products %}
-            <li>
-              {{ product['name'] }} –
-              {{ '%.2f'|format(product['price_cents'] / 100) }} € pro
-              {{ product['unit'] }}
-            </li>
-          {% endfor %}
-        </ul>
+        <table>
+          <thead>
+            <tr>
+              <th>Produkt</th>
+              <th>Preis</th>
+              <th>Einheit</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {# Schleife: ein Tabellenblock pro Produkt. #}
+            {% for product in products %}
+              <tr>
+                <td>{{ product['name'] }}</td>
+                <td>{{ '%.2f'|format(product['price_cents'] / 100) }} €</td>
+                <td>pro {{ product['unit'] }}</td>
+                <td>
+                  {#
+                    Jede Zeile hat ihr eigenes Mini-Formular.
+                    Ein Formular kann nur eine Aktion senden, deshalb pro
+                    Produkt ein eigenes.
+                    method="post" ist Pflicht, weil wir Daten ändern –
+                    niemals per GET (Link) löschen.
+                  #}
+                  <form method="post"
+                        action="/produkte/{{ product['id'] }}/loeschen"
+                        onsubmit="return confirm('Dieses Produkt wirklich löschen?');">
+                    <button type="submit">Löschen</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       {% else %}
         <p>Es sind noch keine Produkte gespeichert.</p>
       {% endif %}
+
+      <!-- Ein normaler HTML-Kommentar: erscheint in der Seitenquelle. -->
+      <h3>Produkt hinzufügen</h3>
+      <!--
+        action = wohin die Daten geschickt werden
+        method="post" = Daten werden im Hintergrund übertragen, nicht in der URL
+        required = Browser prüft, ob das Feld ausgefüllt ist
+      -->
+      <form method="post" action="/produkte/hinzufuegen">
+        <p>
+          <!-- for="name" verbindet die Beschriftung mit dem Feld id="name" -->
+          <label for="name">Name</label><br>
+          <input type="text" id="name" name="name" required>
+        </p>
+        <p>
+          <label for="price">Preis in €</label><br>
+          <!-- Kein type="number", weil Nutzer oft "4,50" mit Komma tippen. -->
+          <input type="text" id="price" name="price"
+                 inputmode="decimal" placeholder="z. B. 4,50" required>
+        </p>
+        <p>
+          <label for="unit">Einheit</label><br>
+          <input type="text" id="unit" name="unit" value="Stück">
+        </p>
+        <button type="submit">Hinzufügen</button>
+      </form>
     </main>
   </body>
 </html>

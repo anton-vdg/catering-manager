@@ -186,7 +186,6 @@ def order_api():
                 if quantity < 1:
                     raise ValueError("Die Menge muss mindestens 1 sein.")
 
-                # Preis neu aus der Datenbank lesen: Browser-Werte sind nie vertrauenswürdig.
                 product = connection.execute(
                     "SELECT price_cents FROM products WHERE id = ?", (product_id,)
                 ).fetchone()
