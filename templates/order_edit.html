@@ -102,23 +102,20 @@
             <tbody>
               {% for item in items %}
                 <tr>
-                  <td>{{ item['name'] }}</td>
+                  <td>{% if item['bundle_id'] %}↳ {% endif %}{{ item['name'] }}</td>
                   <td>{{ item['unit'] }}</td>
-                  {#
-                    Einzelpreis kommt aus order_items.unit_price_cents –
-                    das ist der Preis zum Bestellzeitpunkt, nicht der aktuelle.
-                  #}
                   <td>{{ '%.2f'|format(item['unit_price_cents'] / 100) }} €</td>
                   <td>
-                    {#
-                      Der Feldname enthält die Positions-ID: menge_7.
-                      So kann Python die Menge eindeutig zuordnen.
-                      min="0": 0 eintragen entfernt die Position.
-                    #}
                     <input class="mengenfeld" type="number"
-                           id="menge_{{ item['id'] }}"
-                           name="menge_{{ item['id'] }}"
-                           min="0" value="{{ item['quantity'] }}">
+                          id="menge_{{ item['id'] }}"
+                          name="menge_{{ item['id'] }}"
+                          min="0" value="{{ item['quantity'] }}"
+                          data-product-id="{{ item['product_id'] }}"
+                          data-alt="{{ item['quantity'] }}"
+                          {% if item['bundle_id'] %}
+                            data-bundle-id="{{ item['bundle_id'] }}"
+                            data-per-person="{{ item['per_person'] or 1 }}"
+                          {% endif %}>
                   </td>
                   <td>{{ '%.2f'|format(item['quantity'] * item['unit_price_cents'] / 100) }} €</td>
                 </tr>

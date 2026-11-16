@@ -104,7 +104,9 @@ function addPosition(product) {
   const quantity = document.createElement("input");
   quantity.type = "number";
   quantity.min = "1";
-  quantity.value = "1";
+  // Büfett: Startmenge = Personenzahl, sonst 1.
+  quantity.value = String(product.bundle_persons || 1);
+  quantity.dataset.alt = quantity.value;
 
   // DAS ist der Name, den Python ausliest.
   quantity.name = `neu_menge_${product.id}`;
@@ -126,8 +128,50 @@ function addPosition(product) {
   neuePositionen.append(row);
 
   added.set(product.id, product);
+
+  // Büfett: Bestandteile als eigene Zeilen anhängen und bei einer
+  // Änderung der Personenzahl mitskalieren.
+  if (product.components) {
+    for (const part of product.components) {
+      addPartRow(product, part);
+    }
+    quantity.addEventListener("change", () => {
+      scaleParts(quantity, `#neue-positionen input[data-bundle-id="${product.id}"]`);
+    });
+  }
+
   syncCheckboxes();
   updatePlaceholder();
+}
+
+function addPartRow(bundle, part) {
+  const row = document.createElement("div");
+  row.className = "bestellposition";
+  row.dataset.bundleId = bundle.id;   // bewusst KEIN data-product-id
+
+  const name = document.createElement("span");
+  name.textContent = `↳ ${part.name} (im Büfett enthalten)`;
+
+  const quantity = document.createElement("input");
+  quantity.type = "number";
+  quantity.min = "1";
+  quantity.value = String(part.quantity);
+  quantity.dataset.perPerson = part.per_person;
+  quantity.dataset.bundleId = bundle.id;
+  // Name, den Python ausliest: neu_teil_<büfett-id>_<produkt-id>
+  quantity.name = `neu_teil_${bundle.id}_${part.id}`;
+
+  quantity.addEventListener("focus", () => {
+    setTimeout(() => quantity.select(), 0);
+  });
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.textContent = "Entfernen";
+  removeButton.addEventListener("click", () => row.remove());
+
+  row.append(name, quantity, removeButton);
+  neuePositionen.append(row);
 }
 
 
@@ -138,9 +182,40 @@ function removePosition(productId) {
     row.remove();
   }
 
+  // Bestandteile dieses Büfetts (falls es eins ist) mit entfernen.
+  neuePositionen
+    .querySelectorAll(`div[data-bundle-id="${productId}"]`)
+    .forEach((teil) => teil.remove());
+
   added.delete(productId);
   syncCheckboxes();
   updatePlaceholder();
+}
+
+function scaleParts(bundleInput, partSelector) {
+  // Personenzahl hat sich geändert: jeden Bestandteil um die Differenz
+  // verschieben, damit manuelle Abweichungen erhalten bleiben.
+  const alt = parseInt(bundleInput.dataset.alt, 10);
+  const neu = parseInt(bundleInput.value, 10);
+
+  // Leer oder 0: nichts skalieren. 0 löscht das Büfett beim Speichern
+  // samt Bestandteilen (macht der Server).
+  if (Number.isNaN(neu) || neu < 1) {
+    return;
+  }
+
+  const diff = neu - alt;
+  document.querySelectorAll(partSelector).forEach((teil) => {
+    const menge = parseInt(teil.value, 10);
+    // Leere oder auf 0 gesetzte Bestandteile nicht wiederbeleben.
+    if (!(menge > 0)) {
+      return;
+    }
+    const perPerson = parseInt(teil.dataset.perPerson, 10) || 1;
+    teil.value = Math.max(1, menge + diff * perPerson);
+  });
+
+  bundleInput.dataset.alt = String(neu);
 }
 
 
@@ -165,3 +240,16 @@ function formatCents(cents) {
   // 4000 -> "40,00"
   return (cents / 100).toFixed(2).replace(".", ",");
 }
+
+// Bereits gespeicherte Zeilen: Büfett erkennen und Bestandteile mitskalieren.
+document.querySelectorAll("input[data-alt][data-product-id]").forEach((input) => {
+  input.addEventListener("change", () => {
+    const selector = `input[data-bundle-id="${input.dataset.productId}"]`;
+
+    if (document.querySelector(selector)) {
+      scaleParts(input, selector);       // Büfett: Bestandteile anpassen
+    } else if (input.value !== "") {
+      input.dataset.alt = input.value;   // normale Zeile: nur merken
+    }
+  });
+});

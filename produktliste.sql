@@ -144,3 +144,26 @@ INSERT OR IGNORE INTO products (name, price_cents, unit, tax_rate, category_id) 
   ('Gänsekeule',          0, 'Stück', 7, 12),
   ('Gänsebrust',          0, 'Stück', 7, 12),
   ('Ente',             4000, 'Stück', 7, 12);
+
+
+
+  -- ===== Sammelprodukte =====
+-- Schritt 1: Büfett als Sammelprodukt markieren (Personenzahl).
+UPDATE products SET bundle_persons = 10
+WHERE name = 'Fingerfood Büfett ab 10 Personen' AND bundle_persons IS NULL;
+
+-- Schritt 2: Bestandteile eintragen (Stück pro Person).
+INSERT OR IGNORE INTO bundle_items (bundle_id, component_id, quantity_per_person)
+SELECT b.id, c.id, 1
+FROM products b, products c
+WHERE b.name = 'Fingerfood Büfett ab 10 Personen'
+  AND c.name IN (
+    'Kanapees gemischt (Braten, Schinken, Käse)',
+    'Hähnchenspieße',
+    'Partybuletten',
+    'Garnelen auf Frischkäse und Pumpernickel',
+    'Tomate-Mozzarella-Spieß',
+    'Datteln oder Pflaumen im Speckmantel (ab 10 Stk.)',
+    'Käse-Obst-Spieße',
+    'Obstplatte (für 5 oder 10 Personen)'
+  );

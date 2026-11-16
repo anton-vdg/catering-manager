@@ -32,7 +32,17 @@ CREATE TABLE IF NOT EXISTS products (
   -- NULL = noch keiner Kategorie zugeordnet.
   -- ON DELETE SET NULL: Kategorie löschen setzt die Produkte auf
   -- "ohne Kategorie", statt sie mitzulöschen.
-  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  -- NULL = normales Produkt. Zahl = Sammelprodukt für so viele Personen.
+  bundle_persons INTEGER
+);
+
+-- Was ein Sammelprodukt enthält. quantity_per_person = Stück pro Person.
+CREATE TABLE IF NOT EXISTS bundle_items (
+  bundle_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  component_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  quantity_per_person INTEGER NOT NULL DEFAULT 1 CHECK (quantity_per_person > 0),
+  PRIMARY KEY (bundle_id, component_id)
 );
 
 -- Verhindert doppelte Produktnamen (exakt gleich geschrieben).
@@ -63,6 +73,8 @@ CREATE TABLE IF NOT EXISTS order_items (
   -- WICHTIG: der Preis zum Zeitpunkt der Bestellung, kopiert aus products.
   -- Ändert sich der Produktpreis später, bleibt diese Rechnung korrekt.
   unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
+  -- NULL = normale Position. Sonst die ID des Büfetts, zu dem diese Position gehört.
+  bundle_id INTEGER,
   -- Wird der Auftrag gelöscht, verschwinden seine Positionen automatisch mit.
   FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
   -- Ein Produkt, das in einer Bestellung vorkommt, kann nicht gelöscht werden.

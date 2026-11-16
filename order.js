@@ -93,6 +93,48 @@ function updateSummary() {
   taxElement.textContent = `MwSt.: ${formatCents(totalTaxCents)} €`;
 }
 
+function addBundleParts(bundle) {
+  // Bestandteile als eigene Zeilen anlegen. Schlüssel "b<büfett>:<produkt>"
+  // (Text), damit ein Produkt gleichzeitig als Bestandteil UND einzeln
+  // bestellt werden kann, ohne sich zu überschreiben.
+  for (const part of bundle.components) {
+    selectedProducts.set(`b${bundle.id}:${part.id}`, {
+      id: part.id,
+      name: part.name,
+      unit: part.unit,
+      price_cents: 0,
+      tax_rate: 0,
+      quantity: part.quantity,
+      per_person: part.per_person,
+      bundle_id: bundle.id,
+    });
+  }
+}
+
+function removeBundleParts(bundleId) {
+  for (const key of [...selectedProducts.keys()]) {
+    if (typeof key === "string" && key.startsWith(`b${bundleId}:`)) {
+      selectedProducts.delete(key);
+    }
+  }
+}
+
+function scaleBundleParts(bundle) {
+  // Personenzahl hat sich geändert: jeden Bestandteil um die Differenz
+  // verschieben. Manuelle Abweichungen bleiben dadurch erhalten.
+  const alt = bundle.committed ?? bundle.bundle_persons ?? bundle.quantity;
+  const diff = bundle.quantity - alt;
+
+  for (const [key, part] of selectedProducts) {
+    if (typeof key === "string" && key.startsWith(`b${bundle.id}:`)) {
+      const neu = part.quantity + diff * (part.per_person || 1);
+      // Ungültige Rechnung (NaN): Menge unverändert lassen.
+      part.quantity = Number.isFinite(neu) ? Math.max(1, neu) : part.quantity;
+    }
+  }
+  bundle.committed = bundle.quantity;
+}
+
 
 // ---------------------------------------------------------------------
 // 4. Produktsuche
@@ -148,12 +190,17 @@ function showSearchResults(products) {
 
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
-        // Neu ausgewählt: mit Startmenge 1 übernehmen.
-        // ...product kopiert alle Felder (id, name, price_cents, ...).
-        selectedProducts.set(product.id, { ...product, quantity: 1 });
+        // Sammelprodukt: Menge = Personenzahl, sonst 1.
+        selectedProducts.set(product.id, {
+          ...product,
+          quantity: product.bundle_persons || 1,
+        });
+        if (product.components) {
+          addBundleParts(product);
+        }
       } else {
-        // Abgewählt: aus der Map entfernen.
         selectedProducts.delete(product.id);
+        removeBundleParts(product.id);
       }
       showOrderItems();
     });
@@ -192,13 +239,15 @@ function showOrderItems() {
     return;
   }
 
-  for (const product of selectedProducts.values()) {
+  for (const [key, product] of selectedProducts) {
     const row = document.createElement("div");
     row.className = "bestellposition";
 
     // Name und Einzelpreis.
     const name = document.createElement("span");
-    name.textContent = `${product.name} (${formatCents(product.price_cents)} €)`;
+    name.textContent = product.bundle_id
+    ? `↳ ${product.name} (im Büfett enthalten)`
+    : `${product.name} (${formatCents(product.price_cents)} €)`;
 
     // Mengenfeld.
     const quantity = document.createElement("input");
@@ -223,6 +272,15 @@ function showOrderItems() {
     // Feld verlassen oder Enter: jetzt auf gültig ≥ 1 bringen.
     quantity.addEventListener("change", () => {
       product.quantity = Math.max(1, parseQuantity(quantity.value));
+
+      if (product.components) {
+        // Büfett: Bestandteile anpassen und die Liste neu zeichnen,
+        // damit die geänderten Mengenfelder sichtbar werden.
+        scaleBundleParts(product);
+        showOrderItems();
+        return;
+      }
+
       quantity.value = product.quantity;
       updateSummary();
     });
@@ -232,7 +290,10 @@ function showOrderItems() {
     removeButton.type = "button";  // "button" = löst kein Formular-Absenden aus
     removeButton.textContent = "Entfernen";
     removeButton.addEventListener("click", () => {
-      selectedProducts.delete(product.id);
+      selectedProducts.delete(key);
+      if (!product.bundle_id) {
+        removeBundleParts(product.id);   // Büfett weg -> Bestandteile mit weg
+      }
       showOrderItems();
     });
 
@@ -273,6 +334,7 @@ orderForm.addEventListener("submit", async (event) => {
     items: [...selectedProducts.values()].map((product) => ({
       product_id: product.id,
       quantity: Math.max(1, product.quantity),
+      bundle_id: product.bundle_id || null,
     })),
   };
 
