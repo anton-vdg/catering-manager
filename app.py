@@ -370,6 +370,42 @@ def get_week_summary(montag, sonntag):
     connection.close()
     return rows, bestellungen, kunden
 
+def get_week_positions(start, ende):
+    """
+    Liefert jede einzelne Bestellposition des Zeitraums mit Kunde, Tag
+    und Uhrzeit. Grundlage der Wochenansicht: pro Kategorie eine Tabelle.
+
+    start/ende sind ISO-Text wie "2026-11-17" (BETWEEN auf Textvergleich).
+
+    Sortierung: Kategorie, dann Produkt in der Reihenfolge der Preisliste
+    (p.id), dann Tag und Uhrzeit. Dadurch stehen z. B. alle 10-kg-Spanferkel
+    vor den 15-kg-Spanferkeln.
+
+    Verwendet in: week_view()
+    """
+    connection = connect_db()
+    rows = connection.execute(
+        """
+        SELECT p.id   AS product_id,
+               p.name AS product_name,
+               p.unit,
+               COALESCE(c.name, 'Ohne Kategorie') AS category_name,
+               COALESCE(c.sort_order, 9999)       AS category_sort,
+               o.customer_name, o.order_date, o.order_time,
+               oi.quantity, oi.bundle_id
+        FROM order_items oi
+        JOIN orders   o ON o.id = oi.order_id
+        JOIN products p ON p.id = oi.product_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE o.order_date BETWEEN ? AND ?
+        ORDER BY COALESCE(c.sort_order, 9999), c.id, p.id,
+                 o.order_date, o.order_time
+        """,
+        (start, ende),
+    ).fetchall()
+    connection.close()
+    return rows
+
 def get_bundle_components(bundle_id, persons):
     """
     Liefert die Bestandteile eines Sammelprodukts mit fertig
@@ -864,36 +900,77 @@ def day_view():
 
 
 @app.route("/wochenansicht")
+@app.route("/wochenansicht")
+@app.route("/wochenansicht")
 def week_view():
     """
-    Aggregierte Mengen pro Produkt für eine Kalenderwoche.
+    Wochenansicht: pro Kategorie eine Tabelle mit allen Einzelbestellungen.
     Datei: wochenansicht.html
 
     Datum aus der URL:  /wochenansicht?date=2026-11-12
     Daraus wird die Woche ermittelt (Montag..Sonntag), in der es liegt.
     Ohne Datum: aktuelle Woche.
+
+    Liegt heute in dieser Woche, beginnt die Auswertung erst bei heute:
+    vergangene Tage der laufenden Woche zählen nicht mehr mit.
     """
-    datum_text = request.args.get("date", date.today().isoformat())
+    heute = date.today()
+    datum_text = request.args.get("date", heute.isoformat())
 
     try:
         datum = date.fromisoformat(datum_text)
     except ValueError:
-        datum = date.today()
+        datum = heute
 
     montag, sonntag = week_range(datum)
 
-    rows, bestellungen, kunden = get_week_summary(
-        montag.isoformat(), sonntag.isoformat()
-    )
+    # In der laufenden Woche ist der Anfang heute, sonst der Montag.
+    # montag bleibt unverändert, weil die Vor/Zurück-Links davon ausgehen.
+    start = heute if montag <= heute <= sonntag else montag
 
-    # Flache Liste wie auf der Produkteseite in Kategorien gruppieren.
-    gruppen = []
-    gesamt_cents = 0
-    for row in rows:
-        if not gruppen or gruppen[-1]["name"] != row["category_name"]:
-            gruppen.append({"name": row["category_name"], "produkte": []})
-        gruppen[-1]["produkte"].append(dict(row))
-        gesamt_cents += row["total_cents"]
+    # Kennzahlen (Anzahl Bestellungen, Umsatz) wie bisher.
+    rows, bestellungen, kunden = get_week_summary(
+        start.isoformat(), sonntag.isoformat()
+    )
+    gesamt_cents = sum(row["total_cents"] for row in rows)
+
+    # Einzelpositionen zu Kategorien -> Produkte -> Positionen gruppieren.
+    # Die Sortierung kommt schon aus dem SQL, deshalb reicht der Vergleich
+    # mit dem zuletzt angelegten Eintrag.
+    kategorien = []
+    for row in get_week_positions(start.isoformat(), sonntag.isoformat()):
+        if not kategorien or kategorien[-1]["name"] != row["category_name"]:
+            kategorien.append({
+                "name": row["category_name"],
+                # Nur beim Spanferkel gibt es die zusätzliche kg-Spalte.
+                "mit_kg": row["category_name"] == "Spanferkel",
+                "produkte": [],
+            })
+        kategorie = kategorien[-1]
+
+        if not kategorie["produkte"] \
+                or kategorie["produkte"][-1]["id"] != row["product_id"]:
+            # "Spanferkel 10 kg (ca. 10–12 Personen)" -> "10 kg"
+            treffer = re.search(r"(\d+(?:,\d+)?)\s*kg", row["product_name"])
+            kategorie["produkte"].append({
+                "id": row["product_id"],
+                "name": row["product_name"],
+                "unit": row["unit"],
+                "kg": f"{treffer.group(1)} kg" if treffer else "–",
+                "total": 0,
+                "positionen": [],
+            })
+        produkt = kategorie["produkte"][-1]
+
+        tag = date.fromisoformat(row["order_date"])
+        produkt["total"] += row["quantity"]
+        produkt["positionen"].append({
+            "kunde": row["customer_name"],
+            "tag": f"{WEEKDAYS[tag.weekday()][:2]}, {tag.strftime('%d.%m.')}",
+            "uhrzeit": row["order_time"],
+            "anzahl": row["quantity"],
+            "im_buefett": row["bundle_id"] is not None,
+        })
 
     # Vor/Zurück-Links im Template brauchen fertige URLs.
     vorherige = (montag - timedelta(days=7)).isoformat()
@@ -903,9 +980,10 @@ def week_view():
         "wochenansicht.html",
         selected_date=datum.isoformat(),
         montag=montag,
+        start=start,
         sonntag=sonntag,
         kalenderwoche=montag.isocalendar()[1],
-        gruppen=gruppen,
+        kategorien=kategorien,
         bestellungen=bestellungen,
         kunden=kunden,
         gesamt_cents=gesamt_cents,

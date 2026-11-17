@@ -1,13 +1,17 @@
 <!--
-  wochenansicht.html – aggregierte Mengen einer Kalenderwoche
+  wochenansicht.html – Bestellungen einer Kalenderwoche pro Kategorie
   Gefüllt von der Route week_view() in app.py.
 
   Variablen aus Python:
     selected_date  = gewähltes Datum (damit der Datumswähler es anzeigt)
     montag/sonntag = Datum-Objekte der Woche
+    start          = erster ausgewerteter Tag (heute, wenn die Woche
+                     die Gegenwart enthält, sonst der Montag)
     kalenderwoche  = Zahl wie 46
-    gruppen        = [{name: "Braten", produkte: [...]}, ...]
-    bestellungen   = Anzahl Bestellungen in dieser Woche
+    kategorien     = [{name, mit_kg, produkte: [{name, unit, kg, total,
+                       positionen: [{kunde, tag, uhrzeit, anzahl,
+                                     im_buefett}]}]}]
+    bestellungen   = Anzahl Bestellungen im Zeitraum
     kunden         = Anzahl verschiedener Kundennamen
     gesamt_cents   = Brutto-Summe aller Positionen
     vorherige/naechste = ISO-Datum für die Vor/Zurück-Links
@@ -46,7 +50,7 @@
           ← Vorherige
         </a>
         <span>
-          {{ montag.strftime('%d.%m.%Y') }} – {{ sonntag.strftime('%d.%m.%Y') }}
+          {{ start.strftime('%d.%m.%Y') }} – {{ sonntag.strftime('%d.%m.%Y') }}
         </span>
         <a href="/wochenansicht?date={{ naechste }}" title="Nächste Woche">
           Nächste →
@@ -59,38 +63,52 @@
         · Umsatz: {{ '%.2f'|format(gesamt_cents / 100) }} € (brutto)
       </p>
 
-      {# Keine Bestellungen in dieser Woche? Dann Hinweis statt Tabelle. #}
-      {% if gruppen %}
-        {% for gruppe in gruppen %}
-          <h3>{{ gruppe['name'] }}</h3>
+      {# Keine Bestellungen? Dann Hinweis statt Tabellen. #}
+      {% if kategorien %}
+        {% for kategorie in kategorien %}
+          <h3>{{ kategorie['name'] }}</h3>
+
           <table>
             <thead>
               <tr>
-                <th>Produkt</th>
-                <th>Menge</th>
-                <th>Summe</th>
+                <th>Kundenname</th>
+                <th>Tag</th>
+                <th>Uhrzeit</th>
+                {% if kategorie['mit_kg'] %}<th>kg</th>{% endif %}
+                <th>Anzahl</th>
               </tr>
             </thead>
             <tbody>
-              {% for p in gruppe['produkte'] %}
-                <tr>
-                  <td>{{ p['name'] }}</td>
-                  <td>
-                    {#
-                      total_quantity ist eine Ganzzahl aus SUM().
-                      SQLite liefert bei SUM() einen Integer, deshalb
-                      brauchen wir keine Nachkommastellen.
-                    #}
-                    {{ p['total_quantity'] }} {{ p['unit'] }}
+              {% for p in kategorie['produkte'] %}
+                {# Zwischenüberschrift pro Produkt, darunter dessen Bestellungen. #}
+                <tr class="produktzeile">
+                  <td colspan="{{ 5 if kategorie['mit_kg'] else 4 }}">
+                    {{ p['name'] }}
                   </td>
-                  <td>{{ '%.2f'|format(p['total_cents'] / 100) }} €</td>
+                </tr>
+                {% for pos in p['positionen'] %}
+                  <tr>
+                    <td>{{ pos['kunde'] }}</td>
+                    <td>{{ pos['tag'] }}</td>
+                    <td>{{ pos['uhrzeit'] }} Uhr</td>
+                    {% if kategorie['mit_kg'] %}<td>{{ p['kg'] }}</td>{% endif %}
+                    <td>
+                      {{ pos['anzahl'] }}
+                      {% if pos['im_buefett'] %}<small>(im Büfett)</small>{% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+                {# Summe über alle Bestellungen dieses Produkts. #}
+                <tr class="gesamtzeile">
+                  <td colspan="{{ 4 if kategorie['mit_kg'] else 3 }}">Gesamt</td>
+                  <td>{{ p['total'] }}</td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         {% endfor %}
       {% else %}
-        <p>In dieser Woche gibt es noch keine Bestellungen.</p>
+        <p>In diesem Zeitraum gibt es noch keine Bestellungen.</p>
       {% endif %}
     </main>
   </body>
