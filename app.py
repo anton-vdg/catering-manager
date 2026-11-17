@@ -1946,23 +1946,29 @@ if __name__ == "__main__":
     import socket
     import webbrowser
 
-    HOST, PORT = "127.0.0.1", 5000
-    URL = f"http://{HOST}:{PORT}"
+    PORT = 5000
+    LOKAL_URL = f"http://127.0.0.1:{PORT}"
 
-    # Läuft der Server schon (z. B. Verknüpfung doppelt geklickt)?
-    # Dann nur den Browser öffnen, statt mit "Port belegt" abzustürzen.
+    def wlan_ip():
+        """Ermittelt die IP dieses Rechners im WLAN (es wird nichts gesendet)."""
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            try:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+            except OSError:
+                return "127.0.0.1"  # kein Netzwerk
+
+    # Läuft der Server schon? Dann nur den Browser öffnen.
     with socket.socket() as test:
-        if test.connect_ex((HOST, PORT)) == 0:
-            webbrowser.open(URL)
+        if test.connect_ex(("127.0.0.1", PORT)) == 0:
+            webbrowser.open(LOKAL_URL)
             raise SystemExit
 
-    # Browser kurz verzögert öffnen, damit der Server schon bereit ist.
-    threading.Timer(1.5, lambda: webbrowser.open(URL)).start()
+    print(f"Am Rechner:     {LOKAL_URL}")
+    print(f"Handy (WLAN):   http://{wlan_ip()}:{PORT}")
 
-    # debug=False ist im Alltag wichtig:
-    # - Der Reloader startet die App sonst ZWEIMAL. Dann gäbe es zwei
-    #   Backup-Threads und zwei Browser-Tabs.
-    # - Die Debug-Fehlerseite erlaubt das Ausführen von Code und ist
-    #   deshalb ein Sicherheitsrisiko.
-    # Zum Entwickeln stattdessen: flask --app app run --debug
-    app.run(host=HOST, port=PORT, debug=False)
+    threading.Timer(1.5, lambda: webbrowser.open(LOKAL_URL)).start()
+
+    # 0.0.0.0 = auch aus dem WLAN erreichbar
+    # debug=False bleibt Pflicht (siehe Kommentar von vorher)
+    app.run(host="0.0.0.0", port=PORT, debug=False)
