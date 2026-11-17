@@ -355,6 +355,7 @@ orderForm.addEventListener("submit", async (event) => {
   // Erfolg: Formular leeren und Auswahl zurücksetzen.
   saveHint.textContent = `Bestellung Nr. ${result.order_id} wurde gespeichert.`;
   orderForm.reset();
+  updateAddressRequired();
   selectedProducts.clear();
   searchResults.replaceChildren();
   showOrderItems();   // setzt die Summen wieder auf 0,00 €
@@ -430,3 +431,19 @@ function fillCustomer(customer) {
   customerRequestId++;   // noch laufende Anfragen verwerfen
   customerResults.replaceChildren();
 }
+
+// ---------------------------------------------------------------------
+// 8. Lieferadresse ist nur bei Lieferung Pflicht
+// ---------------------------------------------------------------------
+const addressInput = document.querySelector("#adresse");
+
+function updateAddressRequired() {
+  const selected = document.querySelector('input[name="art"]:checked');
+  addressInput.required = selected !== null && selected.value === "lieferung";
+}
+
+document.querySelectorAll('input[name="art"]').forEach((radio) => {
+  radio.addEventListener("change", updateAddressRequired);
+});
+
+updateAddressRequired();

@@ -18,7 +18,10 @@ from datetime import date           # heutiges Datum für die Tagesansicht
 from io import BytesIO              # PDF im Arbeitsspeicher statt auf Platte
 from pathlib import Path            # Dateipfade unabhängig vom Betriebssystem
 from xml.sax.saxutils import escape # Sonderzeichen (<, >, &) für PDFs entschärfen
-from datetime import date, timedelta
+import os
+import threading
+import time
+from datetime import date, datetime, timedelta
 import re
 
 # Flask = das Web-Framework. Ohne Flask gäbe es keine Routen und keine Templates.
@@ -52,6 +55,12 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, 
 # Datenbank, CSS, JS und SQL-Dateien gefunden – egal, von wo die App startet.
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "products.db"
+
+# Backups liegen in einem eigenen Ordner neben der Datenbank.
+BACKUP_DIR = BASE_DIR / "backups"
+BACKUP_PREFIX = "products_"
+BACKUP_INTERVAL_SECONDS = 5 * 60   # so oft wird geprüft, ob ein Backup nötig ist
+BACKUP_KEEP = 100                  # so viele Backups bleiben erhalten
 
 
 # ===================================================================
@@ -130,6 +139,96 @@ def init_db():
 
     db.commit()
     db.close()
+
+def backup_db():
+    """
+    Legt ein Backup der Datenbank in backups/ an.
+
+    Benutzt die Backup-Funktion von SQLite (connection.backup). Die liefert
+    auch dann eine konsistente Kopie, wenn gerade jemand speichert.
+    Der Dateiname enthält die Stunde (products_2026-11-17_14.db): Gibt es
+    die Datei schon, passiert nichts, es entsteht also höchstens ein
+    Backup pro Stunde.
+
+    Rückgabe: Pfad des neuen Backups oder None, wenn keins nötig war.
+    """
+    BACKUP_DIR.mkdir(exist_ok=True)
+
+    ziel = BACKUP_DIR / f"{BACKUP_PREFIX}{datetime.now():%Y-%m-%d_%H}.db"
+    if ziel.exists():
+        return None
+
+    # Erst in eine temporäre Datei schreiben und prüfen. Erst danach wird
+    # umbenannt, damit nie ein halbes oder kaputtes Backup herumliegt.
+    temp = ziel.with_suffix(".tmp")
+    quelle = connect_db()
+    try:
+        kopie = sqlite3.connect(temp)
+        try:
+            quelle.backup(kopie)
+            ergebnis = kopie.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            kopie.close()
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
+    finally:
+        quelle.close()
+
+    if ergebnis != "ok":
+        temp.unlink(missing_ok=True)
+        raise RuntimeError(f"Backup fehlerhaft: {ergebnis}")
+
+    temp.replace(ziel)
+    delete_old_backups()
+    return ziel
+
+
+def delete_old_backups():
+    """
+    Löscht die ältesten Backups, sodass nur BACKUP_KEEP übrig bleiben.
+    Die Dateinamen enthalten das Datum, alphabetisch sortiert heißt
+    deshalb: älteste zuerst.
+
+    Verwendet in: backup_db()
+    """
+    backups = sorted(BACKUP_DIR.glob(f"{BACKUP_PREFIX}*.db"))
+    for alt in backups[:-BACKUP_KEEP]:
+        alt.unlink(missing_ok=True)
+
+
+def backup_needed():
+    """
+    True, wenn die Datenbank neuer ist als das letzte Backup (oder es
+    noch keins gibt). So entstehen keine Backups, wenn nichts passiert ist.
+
+    Verwendet in: backup_loop()
+    """
+    backups = sorted(BACKUP_DIR.glob(f"{BACKUP_PREFIX}*.db"))
+    if not backups:
+        return True
+    return DB_PATH.stat().st_mtime > backups[-1].stat().st_mtime
+
+
+def backup_loop():
+    """
+    Läuft endlos im Hintergrund (eigener Thread) und sichert die
+    Datenbank, sobald sie sich geändert hat.
+
+    Ein Fehler (z. B. Platte voll) soll die App nicht stoppen: er wird
+    ausgegeben, und der nächste Durchlauf versucht es erneut.
+
+    Gestartet von: Abschnitt 11 (Start)
+    """
+    while True:
+        try:
+            if backup_needed():
+                ziel = backup_db()
+                if ziel:
+                    print(f"Backup angelegt: {ziel.name}")
+        except Exception as fehler:
+            print(f"Backup fehlgeschlagen: {fehler}")
+        time.sleep(BACKUP_INTERVAL_SECONDS)
 
 
 # ===================================================================
@@ -1081,9 +1180,6 @@ def order_api():
     Alles passiert in EINER Verbindung. Entweder wird der Auftrag mit allen
     Positionen gespeichert – oder bei einem Fehler gar nichts. Man nennt das
     eine Transaktion: kein halb gespeicherter Auftrag ohne Positionen.
-
-    Der Kundenstamm (customers) wird hier bewusst NICHT verändert. Stammkunden
-    werden nur auf der Seite /kunden gepflegt.
     """
     data = request.get_json(silent=True) or {}
     customer_name = data.get("customer_name", "").strip()
@@ -1104,6 +1200,10 @@ def order_api():
 
     if fulfillment_type not in {"abholung", "lieferung"}:
         return jsonify({"error": "Ungültige Art der Bestellung."}), 400
+
+    # NEU: Bei Lieferung ist die Adresse Pflicht, bei Abholung nicht.
+    if fulfillment_type == "lieferung" and not delivery_address:
+        return jsonify({"error": "Bei Lieferung bitte eine Lieferadresse angeben."}), 400
 
     connection = connect_db()
     try:
@@ -1807,6 +1907,10 @@ def order_pdf(order_id):
 # Datenbank vorbereiten. Steht hier unten, damit alle Funktionen oben
 # schon definiert sind.
 init_db()
+
+# Backup-Thread starten. daemon=True: der Thread endet automatisch,
+# wenn die App beendet wird.
+threading.Thread(target=backup_loop, daemon=True).start()
 
 if __name__ == "__main__":
     # debug=True: automatischer Neustart bei Codeänderungen + Fehlerseite
