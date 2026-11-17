@@ -359,3 +359,74 @@ orderForm.addEventListener("submit", async (event) => {
   searchResults.replaceChildren();
   showOrderItems();   // setzt die Summen wieder auf 0,00 €
 });
+
+// ---------------------------------------------------------------------
+// 7. Kundenvorschläge
+// ---------------------------------------------------------------------
+// Beim Tippen im Feld "Kundenname" werden passende Kunden aus
+// /api/customers geholt. Ein Klick auf einen Vorschlag füllt Name,
+// Adresse und Telefon aus.
+
+const customerInput = document.querySelector("#kundenname");
+const customerResults = document.querySelector("#kundenvorschlaege");
+
+// Zählt die Anfragen hoch. Antworten, die zu spät kommen (weil schon
+// weitergetippt wurde), werden verworfen, sonst erscheinen alte Treffer.
+let customerRequestId = 0;
+
+customerInput.addEventListener("input", async () => {
+  const searchTerm = customerInput.value.trim();
+  const requestId = ++customerRequestId;
+
+  if (!searchTerm) {
+    customerResults.replaceChildren();
+    return;
+  }
+
+  const response = await fetch(
+    `/api/customers?query=${encodeURIComponent(searchTerm)}`
+  );
+  if (!response.ok) {
+    return;
+  }
+
+  const customers = await response.json();
+  if (requestId !== customerRequestId) {
+    return;   // inzwischen wurde weitergetippt
+  }
+  showCustomerSuggestions(customers);
+});
+
+// Escape schließt die Vorschlagsliste.
+customerInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    customerRequestId++;
+    customerResults.replaceChildren();
+  }
+});
+
+function showCustomerSuggestions(customers) {
+  // Baut pro Kunde einen Knopf: "Name · Adresse · Telefon".
+  customerResults.replaceChildren();
+
+  for (const customer of customers) {
+    const button = document.createElement("button");
+    button.type = "button";   // löst kein Formular-Absenden aus
+    button.className = "kunden-treffer";
+    button.textContent = [customer.name, customer.address, customer.phone]
+      .filter(Boolean)
+      .join(" · ");
+    button.addEventListener("click", () => fillCustomer(customer));
+    customerResults.append(button);
+  }
+}
+
+function fillCustomer(customer) {
+  // Die drei Felder füllen und die Liste schließen.
+  document.querySelector("#kundenname").value = customer.name;
+  document.querySelector("#adresse").value = customer.address;
+  document.querySelector("#telefon").value = customer.phone;
+
+  customerRequestId++;   // noch laufende Anfragen verwerfen
+  customerResults.replaceChildren();
+}

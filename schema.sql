@@ -90,3 +90,15 @@ CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
 -- Beschleunigt das Laden der Tagesansicht ebenfalls:
 -- "WHERE order_date = ?"
 CREATE INDEX IF NOT EXISTS idx_orders_order_date ON orders(order_date);
+
+-- Kundenstamm für die Autovervollständigung auf der Bestellseite.
+-- Ein Kunde ist durch Name + Telefonnummer eindeutig (Groß-/Kleinschreibung
+-- beim Namen egal). Die Bestellungen kopieren die Daten weiterhin selbst,
+-- damit alte Aufträge unverändert bleiben.
+CREATE TABLE IF NOT EXISTS customers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE,
+  phone TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  UNIQUE (name, phone)
+);

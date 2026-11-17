@@ -124,6 +124,7 @@ def init_db():
 
     # 3c) schema.sql = Tabellenstruktur, produktliste.sql = Startinhalte.
     #     executescript führt mehrere SQL-Befehle hintereinander aus.
+    #     Die Kundentabelle (Stammkunden) wird hier nur angelegt, nicht gefüllt.
     db.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
     db.executescript((BASE_DIR / "produktliste.sql").read_text(encoding="utf-8"))
 
@@ -223,6 +224,64 @@ def search_products(search_term):
 
     connection.close()
     return products
+
+def search_customers(search_term):
+    """
+    Sucht Kunden, deren Name mit dem Suchbegriff BEGINNT oder bei denen
+    ein Wort im Namen damit beginnt ("W" findet "Weber, Anna" und
+    "Anna Weber").
+
+    Verwendet in: customer_api()  ->  aufgerufen von order.js beim Tippen.
+
+    LIKE 'W%'   = beginnt mit W
+    LIKE '% W%' = ein späteres Wort beginnt mit W
+    LIMIT 8 hält die Vorschlagsliste kurz.
+    """
+    connection = connect_db()
+
+    customers = connection.execute(
+        """
+        SELECT id, name, address, phone
+        FROM customers
+        WHERE name LIKE ? OR name LIKE ?
+        ORDER BY name
+        LIMIT 8
+        """,
+        (f"{search_term}%", f"% {search_term}%"),
+    ).fetchall()
+
+    connection.close()
+    return customers
+
+def get_customers(search_term=""):
+    """
+    Liest alle Kunden, optional gefiltert.
+
+    Verwendet in: kunden()
+
+    Der Suchbegriff wird in Name, Telefon UND Adresse gesucht
+    (LIKE '%begriff%' = enthält). Ohne Suchbegriff kommen alle Kunden.
+    """
+    connection = connect_db()
+
+    if search_term:
+        muster = f"%{search_term}%"
+        customers = connection.execute(
+            """
+            SELECT id, name, phone, address
+            FROM customers
+            WHERE name LIKE ? OR phone LIKE ? OR address LIKE ?
+            ORDER BY name
+            """,
+            (muster, muster, muster),
+        ).fetchall()
+    else:
+        customers = connection.execute(
+            "SELECT id, name, phone, address FROM customers ORDER BY name"
+        ).fetchall()
+
+    connection.close()
+    return customers
 
 
 def get_orders_for_day(selected_date):
@@ -802,6 +861,159 @@ def produkt_bearbeiten(product_id):
 
     return zurueck_url(hinweis=f"„{name}“ wurde gespeichert.")
 
+# ===================================================================
+# 7b. Routen: Kunden
+# ===================================================================
+@app.route("/kunden")
+def kunden():
+    """
+    Kundenliste mit Formular zum Anlegen. Datei: kunden.html
+    Optionale Suche über die URL:  /kunden?q=weber
+    """
+    search_term = request.args.get("q", "").strip()
+
+    return render_template(
+        "kunden.html",
+        customers=get_customers(search_term),
+        search_term=search_term,
+        hinweis=request.args.get("hinweis"),
+        fehler=request.args.get("fehler"),
+    )
+
+
+@app.route("/kunden/hinzufuegen", methods=["POST"])
+def kunde_hinzufuegen():
+    """
+    Legt einen neuen Kunden an.
+    Abgeschickt von: dem Formular in kunden.html.
+    """
+    name = request.form.get("name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    address = request.form.get("address", "").strip()
+
+    def zurueck_url(**kwargs):
+        return redirect(url_for("kunden", **kwargs))
+
+    if not name:
+        return zurueck_url(fehler="Bitte einen Namen eingeben.")
+
+    if not phone:
+        return zurueck_url(fehler="Bitte eine Telefonnummer eingeben.")
+
+    connection = connect_db()
+    try:
+        connection.execute(
+            "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
+            (name, phone, address),
+        )
+        connection.commit()
+    except sqlite3.IntegrityError:
+        # UNIQUE (name, phone) in schema.sql hat zugeschlagen.
+        connection.close()
+        return zurueck_url(
+            fehler=f"„{name}“ mit dieser Telefonnummer gibt es schon."
+        )
+
+    connection.close()
+    return zurueck_url(hinweis=f"„{name}“ wurde hinzugefügt.")
+
+
+@app.route("/kunden/<int:customer_id>/bearbeiten", methods=["GET", "POST"])
+def kunde_bearbeiten(customer_id):
+    """
+    Zeigt ein vorausgefülltes Formular und speichert die Änderungen.
+    Datei: kunde_edit.html
+    Aufgerufen von: dem ✏️-Knopf in kunden.html.
+
+    GET  = Formular anzeigen (Werte aus der Datenbank)
+    POST = Änderungen speichern (Werte aus dem Formular)
+
+    Alte Bestellungen bleiben unverändert: sie haben ihre eigene Kopie
+    von Name, Adresse und Telefon.
+    """
+    connection = connect_db()
+
+    customer = connection.execute(
+        "SELECT id, name, phone, address FROM customers WHERE id = ?",
+        (customer_id,),
+    ).fetchone()
+
+    if customer is None:
+        connection.close()
+        return redirect(url_for("kunden", fehler="Kunde nicht gefunden."))
+
+    def zeige_formular(werte, fehler_text=None):
+        """
+        Rendert kunde_edit.html. 'werte' enthält die anzuzeigenden
+        Feldinhalte – beim GET die gespeicherten, beim POST die gerade
+        eingegebenen (damit bei einem Fehler nichts verloren geht).
+        """
+        connection.close()
+        return render_template(
+            "kunde_edit.html",
+            customer=werte,
+            fehler=fehler_text,
+        )
+
+    # ---------- GET: nur anzeigen ----------
+    if request.method == "GET":
+        return zeige_formular(dict(customer))
+
+    # ---------- POST: speichern ----------
+    name = request.form.get("name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    address = request.form.get("address", "").strip()
+
+    werte = {"id": customer_id, "name": name, "phone": phone, "address": address}
+
+    if not name:
+        return zeige_formular(werte, "Bitte einen Namen eingeben.")
+
+    if not phone:
+        return zeige_formular(werte, "Bitte eine Telefonnummer eingeben.")
+
+    try:
+        connection.execute(
+            "UPDATE customers SET name = ?, phone = ?, address = ? WHERE id = ?",
+            (name, phone, address, customer_id),
+        )
+        connection.commit()
+    except sqlite3.IntegrityError:
+        # Ein ANDERER Kunde hat schon genau diesen Namen + diese Nummer.
+        return zeige_formular(
+            werte, f"„{name}“ mit dieser Telefonnummer gibt es schon."
+        )
+
+    connection.close()
+    return redirect(url_for("kunden", hinweis=f"„{name}“ wurde gespeichert."))
+
+
+@app.route("/kunden/<int:customer_id>/loeschen", methods=["POST"])
+def kunde_loeschen(customer_id):
+    """
+    Löscht einen Kunden aus dem Kundenstamm.
+    Abgeschickt von: dem 🗑️-Knopf in kunden.html.
+
+    Hier ist ein echtes DELETE richtig: Bestellungen verweisen nicht auf
+    die customers-Tabelle, sondern tragen ihre Kundendaten selbst.
+    Alte Aufträge und PDFs bleiben also vollständig.
+    """
+    connection = connect_db()
+
+    row = connection.execute(
+        "SELECT name FROM customers WHERE id = ?", (customer_id,)
+    ).fetchone()
+
+    if row is None:
+        connection.close()
+        return redirect(url_for("kunden", fehler="Kunde nicht gefunden."))
+
+    connection.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
+    connection.commit()
+    connection.close()
+
+    return redirect(url_for("kunden", hinweis=f"„{row['name']}“ wurde gelöscht."))
+
 
 # ===================================================================
 # 8. API für die Bestellseite
@@ -838,6 +1050,27 @@ def product_api():
         result.append(eintrag)
     return jsonify(result)
 
+@app.route("/api/customers")
+def customer_api():
+    """
+    Liefert Kundenvorschläge als JSON an order.js.
+    Aufgerufen von: order.js beim Tippen ins Feld "Kundenname" (fetch).
+    Antwort z. B.: [{"id": 3, "name": "Anna Weber", "address": "...", "phone": "..."}]
+    """
+    search_term = request.args.get("query", "").strip()
+    if not search_term:
+        return jsonify([])
+
+    return jsonify([
+        {
+            "id": kunde["id"],
+            "name": kunde["name"],
+            "address": kunde["address"],
+            "phone": kunde["phone"],
+        }
+        for kunde in search_customers(search_term)
+    ])
+
 
 @app.route("/api/orders", methods=["POST"])
 def order_api():
@@ -848,6 +1081,9 @@ def order_api():
     Alles passiert in EINER Verbindung. Entweder wird der Auftrag mit allen
     Positionen gespeichert – oder bei einem Fehler gar nichts. Man nennt das
     eine Transaktion: kein halb gespeicherter Auftrag ohne Positionen.
+
+    Der Kundenstamm (customers) wird hier bewusst NICHT verändert. Stammkunden
+    werden nur auf der Seite /kunden gepflegt.
     """
     data = request.get_json(silent=True) or {}
     customer_name = data.get("customer_name", "").strip()

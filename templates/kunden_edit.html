@@ -1,0 +1,65 @@
+<!--
+  kunde_edit.html – einen Kunden bearbeiten
+  Gefüllt von der Route kunde_bearbeiten() in app.py.
+  Bekommt POST von derselben Route zurück.
+
+  Variablen aus Python:
+    customer = {id, name, phone, address}
+    fehler   = Fehlermeldung, falls das Speichern scheiterte
+-->
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Kunde bearbeiten – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/tagesansicht">Tagesansicht</a>
+        <a href="/wochenansicht">Wochenansicht</a>
+        <a href="/produkte">Produkte</a>
+        <a href="/kunden">Kunden</a>
+      </nav>
+    </header>
+
+    <main>
+      <h2>Kunde bearbeiten</h2>
+
+      {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
+
+      <form method="post" action="/kunden/{{ customer['id'] }}/bearbeiten">
+        <p>
+          <label for="name">Name</label><br>
+          <input type="text" id="name" name="name"
+                 value="{{ customer['name'] }}" required>
+        </p>
+
+        <p>
+          <label for="phone">Telefonnummer</label><br>
+          <input type="tel" id="phone" name="phone"
+                 value="{{ customer['phone'] }}" required>
+        </p>
+
+        <p>
+          <label for="address">Adresse</label><br>
+          <input type="text" id="address" name="address"
+                 value="{{ customer['address'] }}">
+        </p>
+
+        <p><small>
+          Änderungen gelten für neue Bestellungen. Bereits gespeicherte
+          Bestellungen behalten ihre Kundendaten.
+        </small></p>
+
+        <div class="button-gruppe">
+          <button type="submit">Speichern</button>
+          <a class="abbrechen" href="/kunden">Abbrechen</a>
+        </div>
+      </form>
+    </main>
+  </body>
+</html>
