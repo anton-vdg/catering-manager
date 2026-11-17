@@ -45,6 +45,11 @@
           <input type="text" id="address" name="address" required>
         </p>
 
+        <p>
+          <label for="notes">Notizen</label><br>
+          <textarea id="notes" name="notes" rows="2"></textarea>
+        </p>
+
         <button type="submit">Hinzufügen</button>
       </form>
 
@@ -71,6 +76,7 @@
               <th>Name</th>
               <th>Telefon</th>
               <th>Adresse</th>
+              <th>Notizen</th>
               <th></th>
             </tr>
           </thead>
@@ -80,6 +86,7 @@
                 <td>{{ customer['name'] }}</td>
                 <td>{{ customer['phone'] }}</td>
                 <td>{{ customer['address'] }}</td>
+                <td class="notiz">{{ customer['notes'] }}</td>
                 <td>
                   <div class="button-gruppe">
                     <a class="bearbeitenbutton"

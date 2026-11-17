@@ -66,6 +66,10 @@
                 {% if order['customer_phone'] %}{{ order['customer_phone'] }}{% endif %}
               </p>
 
+              {% if order['notes'] %}
+                <p class="notiz">📝 {{ order['notes'] }}</p>
+              {% endif %}
+              
               <ul>
                 {% for item in order['items'] %}
                 <li>

@@ -87,6 +87,11 @@
           </label>
         </fieldset>
 
+        <p>
+          <label for="notes">Notizen</label><br>
+          <textarea id="notes" name="notes" rows="3">{{ order['notes'] or '' }}</textarea>
+        </p>
+
         <h3>Positionen</h3>
 
         {% if items %}

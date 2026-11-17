@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS orders (
   -- Nur diese zwei Werte sind erlaubt.
   fulfillment_type TEXT NOT NULL
     CHECK (fulfillment_type IN ('abholung', 'lieferung')),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  notes TEXT                     -- freie Notiz zur Bestellung, darf leer sein
 );
 
 -- Die einzelnen Positionen einer Bestellung.
@@ -100,5 +101,7 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL COLLATE NOCASE,
   phone TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
   UNIQUE (name, phone)
 );

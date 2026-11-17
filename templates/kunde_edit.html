@@ -50,10 +50,10 @@
                  value="{{ customer['address'] }}">
         </p>
 
-        <p><small>
-          Änderungen gelten für neue Bestellungen. Bereits gespeicherte
-          Bestellungen behalten ihre Kundendaten.
-        </small></p>
+        <p>
+          <label for="notes">Notizen</label><br>
+          <textarea id="notes" name="notes" rows="3">{{ customer['notes'] or '' }}</textarea>
+        </p>
 
         <div class="button-gruppe">
           <button type="submit">Speichern</button>

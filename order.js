@@ -324,6 +324,7 @@ orderForm.addEventListener("submit", async (event) => {
     order_date: document.querySelector("#datum").value,
     order_time: document.querySelector("#uhrzeit").value,
     fulfillment_type: selectedFulfillment ? selectedFulfillment.value : "",
+    notes: document.querySelector("#notizen").value.trim(),
 
     // Nur ID und Menge senden. Den Preis liest Python selbst aus der
     // Datenbank – so kann niemand über die Browser-Konsole Preise ändern.
@@ -423,10 +424,13 @@ function showCustomerSuggestions(customers) {
 }
 
 function fillCustomer(customer) {
-  // Die drei Felder füllen und die Liste schließen.
+  // Die Felder füllen und die Liste schließen. Die Notiz des Kunden
+  // wird ins Notizfeld der Bestellung kopiert und kann dort noch
+  // angepasst werden.
   document.querySelector("#kundenname").value = customer.name;
   document.querySelector("#adresse").value = customer.address;
   document.querySelector("#telefon").value = customer.phone;
+  document.querySelector("#notizen").value = customer.notes || "";
 
   customerRequestId++;   // noch laufende Anfragen verwerfen
   customerResults.replaceChildren();

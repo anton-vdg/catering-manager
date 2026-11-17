@@ -135,6 +135,17 @@ def init_db():
     #     executescript führt mehrere SQL-Befehle hintereinander aus.
     #     Die Kundentabelle (Stammkunden) wird hier nur angelegt, nicht gefüllt.
     db.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
+
+    # 3d) Notizspalten nachrüsten. Steht NACH schema.sql, weil orders und
+    #     customers dann sicher existieren.
+    auftragsspalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(orders)")]
+    if "notes" not in auftragsspalten:
+        db.execute("ALTER TABLE orders ADD COLUMN notes TEXT")
+
+    kundenspalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(customers)")]
+    if "notes" not in kundenspalten:
+        db.execute("ALTER TABLE customers ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+
     db.executescript((BASE_DIR / "produktliste.sql").read_text(encoding="utf-8"))
 
     db.commit()
@@ -340,7 +351,7 @@ def search_customers(search_term):
 
     customers = connection.execute(
         """
-        SELECT id, name, address, phone
+        SELECT id, name, address, phone, notes
         FROM customers
         WHERE name LIKE ? OR name LIKE ?
         ORDER BY name
@@ -358,7 +369,7 @@ def get_customers(search_term=""):
 
     Verwendet in: kunden()
 
-    Der Suchbegriff wird in Name, Telefon UND Adresse gesucht
+    Der Suchbegriff wird in Name, Telefon, Adresse UND Notiz gesucht
     (LIKE '%begriff%' = enthält). Ohne Suchbegriff kommen alle Kunden.
     """
     connection = connect_db()
@@ -367,16 +378,16 @@ def get_customers(search_term=""):
         muster = f"%{search_term}%"
         customers = connection.execute(
             """
-            SELECT id, name, phone, address
+            SELECT id, name, phone, address, notes
             FROM customers
-            WHERE name LIKE ? OR phone LIKE ? OR address LIKE ?
+            WHERE name LIKE ? OR phone LIKE ? OR address LIKE ? OR notes LIKE ?
             ORDER BY name
             """,
-            (muster, muster, muster),
+            (muster, muster, muster, muster),
         ).fetchall()
     else:
         customers = connection.execute(
-            "SELECT id, name, phone, address FROM customers ORDER BY name"
+            "SELECT id, name, phone, address, notes FROM customers ORDER BY name"
         ).fetchall()
 
     connection.close()
@@ -989,6 +1000,7 @@ def kunde_hinzufuegen():
     name = request.form.get("name", "").strip()
     phone = request.form.get("phone", "").strip()
     address = request.form.get("address", "").strip()
+    notes = request.form.get("notes", "").strip()
 
     def zurueck_url(**kwargs):
         return redirect(url_for("kunden", **kwargs))
@@ -1002,8 +1014,8 @@ def kunde_hinzufuegen():
     connection = connect_db()
     try:
         connection.execute(
-            "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
-            (name, phone, address),
+            "INSERT INTO customers (name, phone, address, notes) VALUES (?, ?, ?, ?)",
+            (name, phone, address, notes),
         )
         connection.commit()
     except sqlite3.IntegrityError:
@@ -1028,12 +1040,12 @@ def kunde_bearbeiten(customer_id):
     POST = Änderungen speichern (Werte aus dem Formular)
 
     Alte Bestellungen bleiben unverändert: sie haben ihre eigene Kopie
-    von Name, Adresse und Telefon.
+    von Name, Adresse, Telefon und Notiz.
     """
     connection = connect_db()
 
     customer = connection.execute(
-        "SELECT id, name, phone, address FROM customers WHERE id = ?",
+        "SELECT id, name, phone, address, notes FROM customers WHERE id = ?",
         (customer_id,),
     ).fetchone()
 
@@ -1062,8 +1074,10 @@ def kunde_bearbeiten(customer_id):
     name = request.form.get("name", "").strip()
     phone = request.form.get("phone", "").strip()
     address = request.form.get("address", "").strip()
+    notes = request.form.get("notes", "").strip()
 
-    werte = {"id": customer_id, "name": name, "phone": phone, "address": address}
+    werte = {"id": customer_id, "name": name, "phone": phone,
+             "address": address, "notes": notes}
 
     if not name:
         return zeige_formular(werte, "Bitte einen Namen eingeben.")
@@ -1073,8 +1087,9 @@ def kunde_bearbeiten(customer_id):
 
     try:
         connection.execute(
-            "UPDATE customers SET name = ?, phone = ?, address = ? WHERE id = ?",
-            (name, phone, address, customer_id),
+            "UPDATE customers SET name = ?, phone = ?, address = ?, notes = ? "
+            "WHERE id = ?",
+            (name, phone, address, notes, customer_id),
         )
         connection.commit()
     except sqlite3.IntegrityError:
@@ -1154,7 +1169,8 @@ def customer_api():
     """
     Liefert Kundenvorschläge als JSON an order.js.
     Aufgerufen von: order.js beim Tippen ins Feld "Kundenname" (fetch).
-    Antwort z. B.: [{"id": 3, "name": "Anna Weber", "address": "...", "phone": "..."}]
+    Antwort z. B.: [{"id": 3, "name": "Anna Weber", "address": "...",
+                     "phone": "...", "notes": "..."}]
     """
     search_term = request.args.get("query", "").strip()
     if not search_term:
@@ -1166,6 +1182,7 @@ def customer_api():
             "name": kunde["name"],
             "address": kunde["address"],
             "phone": kunde["phone"],
+            "notes": kunde["notes"],
         }
         for kunde in search_customers(search_term)
     ])
@@ -1188,6 +1205,7 @@ def order_api():
     order_date = data.get("order_date", "").strip()
     order_time = data.get("order_time", "").strip()
     fulfillment_type = data.get("fulfillment_type", "").strip()
+    notes = data.get("notes", "").strip()
     items = data.get("items", [])
 
     # Der Server prüft selbst. HTML-Felder mit required reichen nicht,
@@ -1201,7 +1219,7 @@ def order_api():
     if fulfillment_type not in {"abholung", "lieferung"}:
         return jsonify({"error": "Ungültige Art der Bestellung."}), 400
 
-    # NEU: Bei Lieferung ist die Adresse Pflicht, bei Abholung nicht.
+    # Bei Lieferung ist die Adresse Pflicht, bei Abholung nicht.
     if fulfillment_type == "lieferung" and not delivery_address:
         return jsonify({"error": "Bei Lieferung bitte eine Lieferadresse angeben."}), 400
 
@@ -1212,11 +1230,11 @@ def order_api():
             """
             INSERT INTO orders
                 (customer_name, delivery_address, customer_phone,
-                 order_date, order_time, fulfillment_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 order_date, order_time, fulfillment_type, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (customer_name, delivery_address, customer_phone,
-             order_date, order_time, fulfillment_type),
+             order_date, order_time, fulfillment_type, notes),
         )
         order_id = cursor.lastrowid
 
@@ -1544,6 +1562,7 @@ def order_bearbeiten(order_id):
     order_date = request.form.get("order_date", "").strip()
     order_time = request.form.get("order_time", "").strip()
     fulfillment_type = request.form.get("fulfillment_type", "").strip()
+    notes = request.form.get("notes", "").strip()
 
     # Die eingegebenen Stammdaten – damit bei einem Fehler nichts verloren geht.
     neue_werte = {
@@ -1554,6 +1573,7 @@ def order_bearbeiten(order_id):
         "order_date": order_date,
         "order_time": order_time,
         "fulfillment_type": fulfillment_type,
+        "notes": notes,
     }
 
     # ---- Prüfungen VOR dem Schreiben ----
@@ -1577,11 +1597,11 @@ def order_bearbeiten(order_id):
             """
             UPDATE orders
             SET customer_name = ?, customer_phone = ?, delivery_address = ?,
-                order_date = ?, order_time = ?, fulfillment_type = ?
+                order_date = ?, order_time = ?, fulfillment_type = ?, notes = ?
             WHERE id = ?
             """,
             (customer_name, customer_phone, delivery_address,
-             order_date, order_time, fulfillment_type, order_id),
+             order_date, order_time, fulfillment_type, notes, order_id),
         )
 
         # Bestehende Positionen: Menge ändern, 0 bedeutet "entfernen".
@@ -1821,7 +1841,7 @@ def order_pdf(order_id):
                            fontSize=16, leading=20, alignment=TA_RIGHT)
     heading = ParagraphStyle("heading", parent=base, fontName="ComicSans-Bold",
                              fontSize=12, leading=16, spaceBefore=14, spaceAfter=4)
-    
+
     bundle_style = ParagraphStyle("bundle", parent=base, fontName="ComicSans-Bold",
                                 alignment=TA_RIGHT, spaceBefore=6)
 
@@ -1862,6 +1882,11 @@ def order_pdf(order_id):
     if order["customer_phone"]:
         story.append(Paragraph(escape(order["customer_phone"]), base))
 
+    # NEU: Notiz. Zeilenumbrüche aus dem Textfeld werden zu <br/>.
+    if order["notes"]:
+        story.append(Paragraph("Notizen", heading))
+        story.append(Paragraph(escape(order["notes"]).replace("\n", "<br/>"), base))
+
     story.append(Paragraph("Bestellung", heading))
     bundle_ids = {item["bundle_id"] for item in items if item["bundle_id"]}
 
@@ -1886,7 +1911,7 @@ def order_pdf(order_id):
         else:
             story.append(Paragraph(position_text(item), base))
 
-    # NEU: Gesamtbetrag am Ende. escape() ist hier nicht nötig, weil euro()
+    # Gesamtbetrag am Ende. escape() ist hier nicht nötig, weil euro()
     # nur Ziffern, Komma, Punkt und € liefert.
     if total_cents:
         story.append(Spacer(1, 0.3 * cm))
