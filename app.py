@@ -37,12 +37,12 @@ from flask import (
 # ReportLab erzeugt die PDFs. Wird nur von order_pdf() gebraucht.
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
-from reportlab.lib.pagesizes import A5
+from reportlab.lib.pagesizes import A4, A5
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 # ===================================================================
@@ -405,6 +405,77 @@ def get_week_positions(start, ende):
     ).fetchall()
     connection.close()
     return rows
+
+def resolve_week(datum_text):
+    """
+    Wandelt den date-Parameter der URL in die Woche um.
+
+    Gibt (datum, montag, start, sonntag) zurück.
+    start ist heute, wenn heute in dieser Woche liegt (vergangene Tage
+    der laufenden Woche zählen nicht mehr), sonst der Montag.
+    Bei ungültigem Datum wird heute genommen.
+
+    Verwendet in: week_view(), week_pdf()
+    """
+    heute = date.today()
+
+    try:
+        datum = date.fromisoformat(datum_text)
+    except ValueError:
+        datum = heute
+
+    montag, sonntag = week_range(datum)
+    start = heute if montag <= heute <= sonntag else montag
+    return datum, montag, start, sonntag
+
+
+def get_week_categories(start, ende):
+    """
+    Gruppiert die Einzelpositionen des Zeitraums zu
+    Kategorien -> Produkte -> Positionen.
+
+    start/ende sind ISO-Text wie "2026-11-17".
+    Die Sortierung kommt schon aus dem SQL, deshalb reicht der Vergleich
+    mit dem zuletzt angelegten Eintrag.
+
+    Verwendet in: week_view(), week_pdf()
+    """
+    kategorien = []
+    for row in get_week_positions(start, ende):
+        if not kategorien or kategorien[-1]["name"] != row["category_name"]:
+            kategorien.append({
+                "name": row["category_name"],
+                # Nur beim Spanferkel gibt es die zusätzliche kg-Spalte.
+                "mit_kg": row["category_name"] == "Spanferkel",
+                "produkte": [],
+            })
+        kategorie = kategorien[-1]
+
+        if not kategorie["produkte"] \
+                or kategorie["produkte"][-1]["id"] != row["product_id"]:
+            # "Spanferkel 10 kg (ca. 10–12 Personen)" -> "10 kg"
+            treffer = re.search(r"(\d+(?:,\d+)?)\s*kg", row["product_name"])
+            kategorie["produkte"].append({
+                "id": row["product_id"],
+                "name": row["product_name"],
+                "unit": row["unit"],
+                "kg": f"{treffer.group(1)} kg" if treffer else "–",
+                "total": 0,
+                "positionen": [],
+            })
+        produkt = kategorie["produkte"][-1]
+
+        tag = date.fromisoformat(row["order_date"])
+        produkt["total"] += row["quantity"]
+        produkt["positionen"].append({
+            "kunde": row["customer_name"],
+            "tag": f"{WEEKDAYS[tag.weekday()][:2]}, {tag.strftime('%d.%m.')}",
+            "uhrzeit": row["order_time"],
+            "anzahl": row["quantity"],
+            "im_buefett": row["bundle_id"] is not None,
+        })
+
+    return kategorien
 
 def get_bundle_components(bundle_id, persons):
     """
@@ -900,8 +971,6 @@ def day_view():
 
 
 @app.route("/wochenansicht")
-@app.route("/wochenansicht")
-@app.route("/wochenansicht")
 def week_view():
     """
     Wochenansicht: pro Kategorie eine Tabelle mit allen Einzelbestellungen.
@@ -911,22 +980,12 @@ def week_view():
     Daraus wird die Woche ermittelt (Montag..Sonntag), in der es liegt.
     Ohne Datum: aktuelle Woche.
 
-    Liegt heute in dieser Woche, beginnt die Auswertung erst bei heute:
-    vergangene Tage der laufenden Woche zählen nicht mehr mit.
+    Liegt heute in dieser Woche, beginnt die Auswertung erst bei heute
+    (siehe resolve_week).
     """
-    heute = date.today()
-    datum_text = request.args.get("date", heute.isoformat())
-
-    try:
-        datum = date.fromisoformat(datum_text)
-    except ValueError:
-        datum = heute
-
-    montag, sonntag = week_range(datum)
-
-    # In der laufenden Woche ist der Anfang heute, sonst der Montag.
-    # montag bleibt unverändert, weil die Vor/Zurück-Links davon ausgehen.
-    start = heute if montag <= heute <= sonntag else montag
+    datum, montag, start, sonntag = resolve_week(
+        request.args.get("date", date.today().isoformat())
+    )
 
     # Kennzahlen (Anzahl Bestellungen, Umsatz) wie bisher.
     rows, bestellungen, kunden = get_week_summary(
@@ -934,43 +993,7 @@ def week_view():
     )
     gesamt_cents = sum(row["total_cents"] for row in rows)
 
-    # Einzelpositionen zu Kategorien -> Produkte -> Positionen gruppieren.
-    # Die Sortierung kommt schon aus dem SQL, deshalb reicht der Vergleich
-    # mit dem zuletzt angelegten Eintrag.
-    kategorien = []
-    for row in get_week_positions(start.isoformat(), sonntag.isoformat()):
-        if not kategorien or kategorien[-1]["name"] != row["category_name"]:
-            kategorien.append({
-                "name": row["category_name"],
-                # Nur beim Spanferkel gibt es die zusätzliche kg-Spalte.
-                "mit_kg": row["category_name"] == "Spanferkel",
-                "produkte": [],
-            })
-        kategorie = kategorien[-1]
-
-        if not kategorie["produkte"] \
-                or kategorie["produkte"][-1]["id"] != row["product_id"]:
-            # "Spanferkel 10 kg (ca. 10–12 Personen)" -> "10 kg"
-            treffer = re.search(r"(\d+(?:,\d+)?)\s*kg", row["product_name"])
-            kategorie["produkte"].append({
-                "id": row["product_id"],
-                "name": row["product_name"],
-                "unit": row["unit"],
-                "kg": f"{treffer.group(1)} kg" if treffer else "–",
-                "total": 0,
-                "positionen": [],
-            })
-        produkt = kategorie["produkte"][-1]
-
-        tag = date.fromisoformat(row["order_date"])
-        produkt["total"] += row["quantity"]
-        produkt["positionen"].append({
-            "kunde": row["customer_name"],
-            "tag": f"{WEEKDAYS[tag.weekday()][:2]}, {tag.strftime('%d.%m.')}",
-            "uhrzeit": row["order_time"],
-            "anzahl": row["quantity"],
-            "im_buefett": row["bundle_id"] is not None,
-        })
+    kategorien = get_week_categories(start.isoformat(), sonntag.isoformat())
 
     # Vor/Zurück-Links im Template brauchen fertige URLs.
     vorherige = (montag - timedelta(days=7)).isoformat()
@@ -989,6 +1012,120 @@ def week_view():
         gesamt_cents=gesamt_cents,
         vorherige=vorherige,
         naechste=naechste,
+    )
+
+@app.route("/wochenansicht/pdf")
+def week_pdf():
+    """
+    Erzeugt ein A4-PDF der Wochenansicht: pro Kategorie eine eigene Seite.
+    Aufgerufen von: dem PDF-Knopf in wochenansicht.html (neuer Tab).
+
+    Der Zeitraum kommt aus denselben Funktionen wie in der Ansicht,
+    das PDF zeigt also genau das, was auf dem Bildschirm steht.
+    """
+    datum, montag, start, sonntag = resolve_week(
+        request.args.get("date", date.today().isoformat())
+    )
+    kategorien = get_week_categories(start.isoformat(), sonntag.isoformat())
+
+    kalenderwoche = montag.isocalendar()[1]
+    zeitraum = (f"KW {kalenderwoche} · "
+                f"{start.strftime('%d.%m.%Y')} – {sonntag.strftime('%d.%m.%Y')}")
+
+    # ---- Styles ----
+    base = ParagraphStyle("wbase", fontName="ComicSans", fontSize=10, leading=13)
+    bold = ParagraphStyle("wbold", parent=base, fontName="ComicSans-Bold")
+    titel = ParagraphStyle("wtitel", parent=base, fontName="ComicSans-Bold",
+                           fontSize=20, leading=24)
+    klein = ParagraphStyle("wklein", parent=base, textColor=colors.grey)
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+        topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        title=f"Wochenansicht KW {kalenderwoche}",
+    )
+
+    story = []
+
+    if not kategorien:
+        story.append(Paragraph("Wochenansicht", titel))
+        story.append(Paragraph(escape(zeitraum), klein))
+        story.append(Spacer(1, 0.5 * cm))
+        story.append(Paragraph("In diesem Zeitraum gibt es keine Bestellungen.", base))
+
+    for index, kategorie in enumerate(kategorien):
+        # Jede Kategorie beginnt auf einer neuen Seite.
+        if index > 0:
+            story.append(PageBreak())
+
+        story.append(Paragraph(escape(kategorie["name"]), titel))
+        story.append(Paragraph(escape(zeitraum), klein))
+        story.append(Spacer(1, 0.5 * cm))
+
+        mit_kg = kategorie["mit_kg"]
+        spalten = 5 if mit_kg else 4
+
+        # Gesamtbreite 18 cm (A4 minus Ränder).
+        if mit_kg:
+            breiten = [6.5 * cm, 3.5 * cm, 3 * cm, 2.5 * cm, 2.5 * cm]
+        else:
+            breiten = [8 * cm, 3.5 * cm, 3 * cm, 3.5 * cm]
+
+        kopf = ["Kundenname", "Tag", "Uhrzeit"]
+        if mit_kg:
+            kopf.append("kg")
+        kopf.append("Anzahl")
+
+        daten = [[Paragraph(text, bold) for text in kopf]]
+        stil = [
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
+        ]
+
+        for produkt in kategorie["produkte"]:
+            # Zwischenüberschrift: Produktname über alle Spalten.
+            zeile = len(daten)
+            daten.append([Paragraph(escape(produkt["name"]), bold)]
+                         + [""] * (spalten - 1))
+            stil.append(("SPAN", (0, zeile), (-1, zeile)))
+            stil.append(("BACKGROUND", (0, zeile), (-1, zeile),
+                         colors.HexColor("#e8e8e0")))
+
+            for pos in produkt["positionen"]:
+                anzahl = str(pos["anzahl"])
+                if pos["im_buefett"]:
+                    anzahl += " (im Büfett)"
+
+                zellen = [
+                    Paragraph(escape(pos["kunde"]), base),
+                    Paragraph(escape(pos["tag"]), base),
+                    Paragraph(f"{escape(pos['uhrzeit'])} Uhr", base),
+                ]
+                if mit_kg:
+                    zellen.append(Paragraph(escape(produkt["kg"]), base))
+                zellen.append(Paragraph(escape(anzahl), base))
+                daten.append(zellen)
+
+            # Summenzeile: "Gesamt" links, Summe unter "Anzahl".
+            zeile = len(daten)
+            daten.append([Paragraph("Gesamt", bold)]
+                         + [""] * (spalten - 2)
+                         + [Paragraph(str(produkt["total"]), bold)])
+            stil.append(("SPAN", (0, zeile), (spalten - 2, zeile)))
+            stil.append(("LINEBELOW", (0, zeile), (-1, zeile), 0.5, colors.grey))
+
+        tabelle = Table(daten, colWidths=breiten, repeatRows=1)
+        tabelle.setStyle(TableStyle(stil))
+        story.append(tabelle)
+
+    doc.build(story)
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        download_name=f"Wochenansicht_KW{kalenderwoche}.pdf",
     )
 
 

@@ -62,7 +62,14 @@
         {{ bestellungen }} Bestellung{{ '' if bestellungen == 1 else 'en' }}
         · Umsatz: {{ '%.2f'|format(gesamt_cents / 100) }} € (brutto)
       </p>
-
+      <!--
+        PDF der angezeigten Woche in neuem Tab. Das versteckte Feld gibt
+        dasselbe Datum weiter, damit das PDF denselben Zeitraum zeigt.
+      -->
+      <form method="get" action="/wochenansicht/pdf" target="_blank">
+        <input type="hidden" name="date" value="{{ selected_date }}">
+        <button type="submit" title="Wochenansicht als PDF öffnen">📄 Als PDF öffnen</button>
+      </form>
       {# Keine Bestellungen? Dann Hinweis statt Tabellen. #}
       {% if kategorien %}
         {% for kategorie in kategorien %}
