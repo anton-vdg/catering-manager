@@ -1,3 +1,4 @@
-.venv
-products.db
+.venv/
+__pycache__/
 backups/
+products.db

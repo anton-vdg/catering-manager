@@ -1937,7 +1937,32 @@ init_db()
 # wenn die App beendet wird.
 threading.Thread(target=backup_loop, daemon=True).start()
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
     # debug=True: automatischer Neustart bei Codeänderungen + Fehlerseite
     # im Browser. Für den echten Betrieb auf debug=False stellen.
-    app.run(debug=True)
+    # app.run(debug=True)
+
+if __name__ == "__main__":
+    import socket
+    import webbrowser
+
+    HOST, PORT = "127.0.0.1", 5000
+    URL = f"http://{HOST}:{PORT}"
+
+    # Läuft der Server schon (z. B. Verknüpfung doppelt geklickt)?
+    # Dann nur den Browser öffnen, statt mit "Port belegt" abzustürzen.
+    with socket.socket() as test:
+        if test.connect_ex((HOST, PORT)) == 0:
+            webbrowser.open(URL)
+            raise SystemExit
+
+    # Browser kurz verzögert öffnen, damit der Server schon bereit ist.
+    threading.Timer(1.5, lambda: webbrowser.open(URL)).start()
+
+    # debug=False ist im Alltag wichtig:
+    # - Der Reloader startet die App sonst ZWEIMAL. Dann gäbe es zwei
+    #   Backup-Threads und zwei Browser-Tabs.
+    # - Die Debug-Fehlerseite erlaubt das Ausführen von Code und ist
+    #   deshalb ein Sicherheitsrisiko.
+    # Zum Entwickeln stattdessen: flask --app app run --debug
+    app.run(host=HOST, port=PORT, debug=False)
