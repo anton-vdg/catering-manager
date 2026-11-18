@@ -211,8 +211,9 @@ function scaleParts(bundleInput, partSelector) {
     if (!(menge > 0)) {
       return;
     }
-    const perPerson = parseInt(teil.dataset.perPerson, 10) || 1;
-    teil.value = Math.max(1, menge + diff * perPerson);
+    // Stück pro Person kann ein Dezimalwert sein (z. B. 1,5).
+    const perPerson = parseFloat(teil.dataset.perPerson) || 1;
+    teil.value = Math.max(1, Math.round(menge + diff * perPerson));
   });
 
   bundleInput.dataset.alt = String(neu);

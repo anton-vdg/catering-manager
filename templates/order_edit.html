@@ -4,10 +4,10 @@
 
   Variablen aus Python:
     order    = {id, customer_name, customer_phone, delivery_address,
-                order_date, order_time, fulfillment_type}
-    items    = Liste der Positionen mit id, name, unit,
-               quantity, unit_price_cents
-    products = alle sichtbaren Produkte für das Hinzufügen-Auswahlfeld
+                order_date, order_time, fulfillment_type, notes}
+    items    = Liste der Positionen mit id, product_id, bundle_id, name,
+               unit, quantity, unit_price_cents, per_person
+    products = alle sichtbaren Produkte
     fehler   = Meldung, falls das Speichern nicht geklappt hat
 -->
 <!doctype html>
@@ -34,10 +34,6 @@
 
       {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
 
-      {#
-        form-breit hebt das max-width: 500px aus style.css auf,
-        damit die Tabelle Platz hat.
-      #}
       <form class="form-breit" method="post"
             action="/bestellungen/{{ order['id'] }}/bearbeiten">
 
@@ -113,15 +109,15 @@
                   <td>{{ '%.2f'|format(item['unit_price_cents'] / 100) }} €</td>
                   <td>
                     <input class="mengenfeld" type="number"
-                          id="menge_{{ item['id'] }}"
-                          name="menge_{{ item['id'] }}"
-                          min="0" value="{{ item['quantity'] }}"
-                          data-product-id="{{ item['product_id'] }}"
-                          data-alt="{{ item['quantity'] }}"
-                          {% if item['bundle_id'] %}
-                            data-bundle-id="{{ item['bundle_id'] }}"
-                            data-per-person="{{ item['per_person'] or 1 }}"
-                          {% endif %}>
+                           id="menge_{{ item['id'] }}"
+                           name="menge_{{ item['id'] }}"
+                           min="0" value="{{ item['quantity'] }}"
+                           data-product-id="{{ item['product_id'] }}"
+                           data-alt="{{ item['quantity'] }}"
+                           {% if item['bundle_id'] %}
+                             data-bundle-id="{{ item['bundle_id'] }}"
+                             data-per-person="{{ item['per_person'] or 1 }}"
+                           {% endif %}>
                   </td>
                   <td>{{ '%.2f'|format(item['quantity'] * item['unit_price_cents'] / 100) }} €</td>
                 </tr>
@@ -138,29 +134,17 @@
 
         <h3>Position hinzufügen</h3>
 
-        <!--
-          Produktsuche wie auf der Startseite.
-          Die Eingabe hat kein name-Attribut und wird deshalb NICHT
-          mitgeschickt – sie dient nur dem JavaScript.
-        -->
         <label for="produktsuche">Produkt suchen</label>
         <input id="produktsuche" type="search" autocomplete="off">
         <div id="suchergebnisse" class="suchergebnisse"></div>
 
-        <!--
-          Hier baut order_edit.js pro ausgewähltem Produkt eine Zeile mit
-          Mengenfeld ein. Der Name dieser Felder lautet neu_menge_<id> –
-          daran erkennt app.py die neuen Positionen.
-        -->
         <div id="neue-positionen" class="ausgewaehlte-produkte">
           <p id="keine-neuen">Noch kein Produkt ausgewählt.</p>
         </div>
 
         <div class="button-gruppe">
           <button type="submit">Speichern</button>
-
-          {# Abbrechen: zurück zur Tagesansicht des gespeicherten Datums. #}
-          <a class="abbrechen" href="/tagesansicht?date={{ order['order_date'] }}">
+          <a class="abbrechen" href="/bestelluebersicht?date={{ order['order_date'] }}">
             Abbrechen
           </a>
         </div>

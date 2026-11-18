@@ -4,8 +4,11 @@
   Bekommt POST von derselben Route zurück.
 
   Variablen aus Python:
-    product           = {id, name, unit, price_text, tax_rate, category_id}
+    product           = {id, name, unit, price_text, tax_rate, category_id,
+                         bundle_persons}
     categories        = alle Kategorien für das Dropdown
+    teile             = Bestandteile des Büfetts (id, name, unit, quantity)
+    kandidaten        = Produkte, die als Bestandteil hinzugefügt werden können
     selected_category = die Kategorie, aus der man kam (für den Rücksprung)
     fehler            = Fehlermeldung, falls das Speichern scheiterte
 -->
@@ -33,27 +36,22 @@
 
       {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
 
-      <!--
-        method="post" schickt die Änderungen an dieselbe Route.
-        Die Produkt-ID steckt in der URL (action), nicht in einem Feld.
-      -->
-      <form method="post" action="/produkte/{{ product['id'] }}/bearbeiten">
+      {# form-breit: die Bestandteil-Tabelle braucht mehr Platz als 500px. #}
+      <form class="form-breit" method="post"
+            action="/produkte/{{ product['id'] }}/bearbeiten">
 
-        <!-- Damit wir nach dem Speichern in die alte Kategorie zurückkehren. -->
         {% if selected_category %}
           <input type="hidden" name="kategorie" value="{{ selected_category }}">
         {% endif %}
 
         <p>
           <label for="name">Name</label><br>
-          <!-- value=... füllt das Feld mit dem bisherigen Namen. -->
           <input type="text" id="name" name="name"
                  value="{{ product['name'] }}" required>
         </p>
 
         <p>
           <label for="price">Preis in €</label><br>
-          <!-- price_text ist der vorbereitete Preis im Format "4,50". -->
           <input type="text" id="price" name="price"
                  value="{{ product['price_text'] }}"
                  inputmode="decimal" placeholder="z. B. 4,50" required>
@@ -79,11 +77,6 @@
         <p>
           <label for="tax_rate">MwSt.-Satz</label><br>
           <select id="tax_rate" name="tax_rate">
-            <!--
-              |string macht aus 7 den Text "7". Nötig, weil tax_rate
-              beim ersten Anzeigen eine Zahl ist, nach einem Fehler
-              aber ein Text aus dem Formular.
-            -->
             <option value="7"  {% if product['tax_rate']|string == '7'  %}selected{% endif %}>7 % (Speisen)</option>
             <option value="19" {% if product['tax_rate']|string == '19' %}selected{% endif %}>19 % (Non-Food)</option>
           </select>
@@ -94,7 +87,6 @@
           <select id="category_id" name="category_id">
             <option value="">– keine –</option>
             {% for k in categories %}
-              <!-- Vorauswahl: die aktuell gespeicherte Kategorie. -->
               <option value="{{ k['id'] }}"
                       {% if product['category_id'] == k['id'] %}selected{% endif %}>
                 {{ k['name'] }}
@@ -103,13 +95,62 @@
           </select>
         </p>
 
+        <h3>Büfett</h3>
+
+        <p>
+          <label for="bundle_persons">Personenzahl</label><br>
+          <input type="number" id="bundle_persons" name="bundle_persons"
+                 min="1" value="{{ product['bundle_persons'] or '' }}">
+          <br>
+          <small>
+            Leer lassen = normales Produkt, kein Büfett. Leeren löscht die
+            Bestandteile.
+          </small>
+        </p>
+
+        {% if teile %}
+          <table>
+            <thead>
+              <tr>
+                <th>Bestandteil</th>
+                <th>Einheit</th>
+                <th>Menge</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for teil in teile %}
+                <tr>
+                  <td>{{ teil['name'] }}</td>
+                  <td>{{ teil['unit'] }}</td>
+                  <td>
+                    <input class="mengenfeld" type="number" min="0"
+                           name="teil_{{ teil['id'] }}"
+                           value="{{ teil['quantity'] }}">
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <p><small>
+            Menge gilt für die Personenzahl oben. Auf <strong>0</strong>
+            setzen entfernt den Bestandteil, leer = unverändert.
+          </small></p>
+        {% endif %}
+
+        <p>
+          <label for="neu_teil_produkt">Bestandteil hinzufügen</label><br>
+          <select id="neu_teil_produkt" name="neu_teil_produkt">
+            <option value="">– keiner –</option>
+            {% for k in kandidaten %}
+              <option value="{{ k['id'] }}">{{ k['name'] }}</option>
+            {% endfor %}
+          </select>
+          <input class="mengenfeld" type="number" min="1"
+                 name="neu_teil_menge" placeholder="Menge">
+        </p>
+
         <div class="button-gruppe">
           <button type="submit">Speichern</button>
-
-          <!--
-            Abbrechen ist ein Link, kein Formular: es wird nichts abgeschickt.
-            Der Kategorie-Parameter hält den Filter beim Zurückgehen.
-          -->
           <a class="abbrechen"
              href="/produkte{% if selected_category %}?kategorie={{ selected_category }}{% endif %}">
             Abbrechen

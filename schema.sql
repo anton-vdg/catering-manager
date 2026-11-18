@@ -37,11 +37,12 @@ CREATE TABLE IF NOT EXISTS products (
   bundle_persons INTEGER
 );
 
--- Was ein Sammelprodukt enthält. quantity_per_person = Stück pro Person.
+-- Was ein Sammelprodukt enthält. quantity = Menge für die Standard-
+-- Personenzahl des Büfetts (products.bundle_persons).
 CREATE TABLE IF NOT EXISTS bundle_items (
   bundle_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   component_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-  quantity_per_person INTEGER NOT NULL DEFAULT 1 CHECK (quantity_per_person > 0),
+  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
   PRIMARY KEY (bundle_id, component_id)
 );
 

@@ -147,23 +147,26 @@ INSERT OR IGNORE INTO products (name, price_cents, unit, tax_rate, category_id) 
 
 
 
-  -- ===== Sammelprodukte =====
--- Schritt 1: Büfett als Sammelprodukt markieren (Personenzahl).
+-- ===== Sammelprodukte =====
+-- Schritt 1: Büfett als Sammelprodukt markieren (Standard-Personenzahl).
 UPDATE products SET bundle_persons = 10
 WHERE name = 'Fingerfood Büfett ab 10 Personen' AND bundle_persons IS NULL;
 
--- Schritt 2: Bestandteile eintragen (Stück pro Person).
-INSERT OR IGNORE INTO bundle_items (bundle_id, component_id, quantity_per_person)
-SELECT b.id, c.id, 1
-FROM products b, products c
-WHERE b.name = 'Fingerfood Büfett ab 10 Personen'
-  AND c.name IN (
-    'Kanapees gemischt (Braten, Schinken, Käse)',
-    'Hähnchenspieße',
-    'Partybuletten',
-    'Garnelen auf Frischkäse und Pumpernickel',
-    'Tomate-Mozzarella-Spieß',
-    'Datteln oder Pflaumen im Speckmantel (ab 10 Stk.)',
-    'Käse-Obst-Spieße',
-    'Obstplatte (für 5 oder 10 Personen)'
-  );
+-- Schritt 2: Bestandteile mit Menge für die Standard-Personenzahl.
+-- INSERT OR REPLACE: wer hier eine Zahl ändert, überschreibt beim nächsten
+-- Start den alten Wert in der Datenbank.
+INSERT OR REPLACE INTO bundle_items (bundle_id, component_id, quantity)
+SELECT b.id, c.id, v.column2
+FROM products b
+JOIN (VALUES
+  ('Kanapees gemischt (Braten, Schinken, Käse)',        10),
+  ('Hähnchenspieße',                                    15),
+  ('Partybuletten',                                     15),
+  ('Garnelen auf Frischkäse und Pumpernickel',          10),
+  ('Tomate-Mozzarella-Spieß',                           20),
+  ('Datteln oder Pflaumen im Speckmantel (ab 10 Stk.)', 10),
+  ('Käse-Obst-Spieße',                                  10),
+  ('Obstplatte (für 5 oder 10 Personen)',               10)
+) AS v
+JOIN products c ON c.name = v.column1
+WHERE b.name = 'Fingerfood Büfett ab 10 Personen';

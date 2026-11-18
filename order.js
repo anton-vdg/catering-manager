@@ -102,7 +102,7 @@ function addBundleParts(bundle) {
       id: part.id,
       name: part.name,
       unit: part.unit,
-      price_cents: 0,
+      price_cents: 0,      // im Büfettpreis enthalten
       tax_rate: 0,
       quantity: part.quantity,
       per_person: part.per_person,
@@ -129,7 +129,8 @@ function scaleBundleParts(bundle) {
     if (typeof key === "string" && key.startsWith(`b${bundle.id}:`)) {
       const neu = part.quantity + diff * (part.per_person || 1);
       // Ungültige Rechnung (NaN): Menge unverändert lassen.
-      part.quantity = Number.isFinite(neu) ? Math.max(1, neu) : part.quantity;
+      // Runden, weil per_person z. B. 1,5 sein kann.
+      part.quantity = Number.isFinite(neu) ? Math.max(1, Math.round(neu)) : part.quantity;
     }
   }
   bundle.committed = bundle.quantity;
@@ -168,7 +169,6 @@ searchInput.addEventListener("input", async () => {
 
 function showSearchResults(products) {
   // Baut die Trefferliste mit je einer Checkbox pro Produkt.
-  // Wird von der Suche oben aufgerufen.
   searchResults.replaceChildren();
 
   if (products.length === 0) {
@@ -184,16 +184,17 @@ function showSearchResults(products) {
     checkbox.type = "checkbox";
     checkbox.dataset.productId = product.id;
 
-    // War das Produkt schon ausgewählt (z. B. nach erneuter Suche)?
-    // Dann Häkchen wieder setzen.
+    // War das Produkt schon ausgewählt? Dann Häkchen wieder setzen.
     checkbox.checked = selectedProducts.has(product.id);
 
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
         // Sammelprodukt: Menge = Personenzahl, sonst 1.
+        // committed = zuletzt übernommene Personenzahl (für das Mitskalieren).
         selectedProducts.set(product.id, {
           ...product,
           quantity: product.bundle_persons || 1,
+          committed: product.bundle_persons || 1,
         });
         if (product.components) {
           addBundleParts(product);
@@ -220,12 +221,8 @@ function showSearchResults(products) {
 
 function showOrderItems() {
   // Baut die Liste "Bestellte Produkte" komplett neu aus selectedProducts.
-  // Wird aufgerufen bei: Auswahl ändern, Menge verlassen, Entfernen,
-  //                      nach dem Speichern.
-  //
   // WICHTIG: Beim Tippen in ein Mengenfeld darf diese Funktion NICHT
-  // laufen – sonst wird das Feld ersetzt und der Cursor springt raus.
-  // Dafür gibt es updateSummary().
+  // laufen, sonst springt der Cursor raus. Dafür gibt es updateSummary().
   orderItems.replaceChildren();
 
   // Nach einer neuen Suche sind die Checkboxen neu – Häkchen nachziehen.
@@ -243,11 +240,11 @@ function showOrderItems() {
     const row = document.createElement("div");
     row.className = "bestellposition";
 
-    // Name und Einzelpreis.
+    // Name und Einzelpreis (Bestandteile: nur der Hinweis).
     const name = document.createElement("span");
     name.textContent = product.bundle_id
-    ? `↳ ${product.name} (im Büfett enthalten)`
-    : `${product.name} (${formatCents(product.price_cents)} €)`;
+      ? `↳ ${product.name} (im Büfett enthalten)`
+      : `${product.name} (${formatCents(product.price_cents)} €)`;
 
     // Mengenfeld.
     const quantity = document.createElement("input");
@@ -256,10 +253,7 @@ function showOrderItems() {
     quantity.value = product.quantity;
 
     // Beim Klick ins Feld wird der Inhalt markiert.
-    // Dann ersetzt "20" tippen die 1 direkt, statt "120" zu ergeben.
     quantity.addEventListener("focus", () => {
-      // setTimeout(..., 0): der Klick ist dann vorbei. Ohne das
-      // hebt der Browser die Markierung sofort wieder auf.
       setTimeout(() => quantity.select(), 0);
     });
 
@@ -287,7 +281,7 @@ function showOrderItems() {
 
     // Entfernen-Knopf.
     const removeButton = document.createElement("button");
-    removeButton.type = "button";  // "button" = löst kein Formular-Absenden aus
+    removeButton.type = "button";  // löst kein Formular-Absenden aus
     removeButton.textContent = "Entfernen";
     removeButton.addEventListener("click", () => {
       selectedProducts.delete(key);
@@ -326,12 +320,10 @@ orderForm.addEventListener("submit", async (event) => {
     fulfillment_type: selectedFulfillment ? selectedFulfillment.value : "",
     notes: document.querySelector("#notizen").value.trim(),
 
-    // Nur ID und Menge senden. Den Preis liest Python selbst aus der
-    // Datenbank – so kann niemand über die Browser-Konsole Preise ändern.
-    //
-    // Math.max(1, ...) ist wichtig: hat jemand "0" getippt und direkt
-    // auf Speichern geklickt, ohne das Feld zu verlassen, steht in
-    // product.quantity noch 0. Python würde das ablehnen.
+    // Nur ID, Menge und Büfett-Zuordnung senden. Den Preis liest Python
+    // selbst aus der Datenbank.
+    // Math.max(1, ...): hat jemand "0" getippt und direkt auf Speichern
+    // geklickt, steht in product.quantity noch 0. Python würde das ablehnen.
     items: [...selectedProducts.values()].map((product) => ({
       product_id: product.id,
       quantity: Math.max(1, product.quantity),
@@ -341,8 +333,8 @@ orderForm.addEventListener("submit", async (event) => {
 
   const response = await fetch("/api/orders", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },  // "Ich schicke JSON"
-    body: JSON.stringify(orderData),                  // JS-Objekt -> JSON-Text
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(orderData),
   });
 
   const result = await response.json();

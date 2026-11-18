@@ -100,7 +100,6 @@ def init_db():
     db = connect_db()
 
     # 3a) Kategorietabelle anlegen, falls sie fehlt.
-    #     Muss VOR der category_id-Spalte passieren, weil products darauf verweist.
     db.execute("""
         CREATE TABLE IF NOT EXISTS categories (
           id INTEGER PRIMARY KEY,
@@ -110,7 +109,6 @@ def init_db():
     """)
 
     # 3b) Existiert die products-Tabelle schon, ergänze fehlende Spalten.
-    #     PRAGMA table_info liefert eine Zeile pro Spalte; [1] ist der Name.
     spalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(products)")]
     if spalten:
         if "active" not in spalten:
@@ -125,16 +123,21 @@ def init_db():
                 "ALTER TABLE products ADD COLUMN tax_rate INTEGER NOT NULL DEFAULT 19"
             )
         if "bundle_persons" not in spalten:
-            db.execute(
-                "ALTER TABLE products ADD COLUMN bundle_persons INTEGER")
+            db.execute("ALTER TABLE products ADD COLUMN bundle_persons INTEGER")
+
     # order_items hat eigene Spalten, deshalb eine eigene Liste.
-        positionsspalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(order_items)")]
-        if positionsspalten and "bundle_id" not in positionsspalten:
-            db.execute("ALTER TABLE order_items ADD COLUMN bundle_id INTEGER")
+    positionsspalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(order_items)")]
+    if positionsspalten and "bundle_id" not in positionsspalten:
+        db.execute("ALTER TABLE order_items ADD COLUMN bundle_id INTEGER")
+
+    # Alte bundle_items (Spalte quantity_per_person) verwerfen. Die neue
+    # Tabelle mit der Spalte quantity legt schema.sql gleich an, der Inhalt
+    # kommt danach aus produktliste.sql.
+    bundlespalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(bundle_items)")]
+    if bundlespalten and "quantity" not in bundlespalten:
+        db.execute("DROP TABLE bundle_items")
 
     # 3c) schema.sql = Tabellenstruktur, produktliste.sql = Startinhalte.
-    #     executescript führt mehrere SQL-Befehle hintereinander aus.
-    #     Die Kundentabelle (Stammkunden) wird hier nur angelegt, nicht gefüllt.
     db.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
 
     # 3d) Notizspalten nachrüsten. Steht NACH schema.sql, weil orders und
@@ -317,9 +320,6 @@ def search_products(search_term):
     Sucht sichtbare Produkte, deren Name den Suchbegriff enthält.
 
     Verwendet in: product_api()  ->  aufgerufen von order.js beim Tippen.
-
-    LIKE '%begriff%' bedeutet "enthält". Die Prozentzeichen sind der
-    Platzhalter dafür, das ? setzt den Suchbegriff sicher ein.
     """
     connection = connect_db()
 
@@ -706,14 +706,16 @@ def get_week_categories(start, ende):
 
 def get_bundle_components(bundle_id, persons):
     """
-    Liefert die Bestandteile eines Sammelprodukts mit fertig
-    berechneter Menge (Stück pro Person × Personenzahl).
+    Liefert die Bestandteile eines Sammelprodukts.
+    quantity   = Menge für die Standard-Personenzahl (aus bundle_items)
+    per_person = Stück pro Person (quantity / persons), nur zum Mitskalieren
+                 im Browser, wenn sich die Personenzahl ändert.
     Verwendet in: product_api()
     """
     connection = connect_db()
     rows = connection.execute(
         """
-        SELECT p.id, p.name, p.unit, bi.quantity_per_person
+        SELECT p.id, p.name, p.unit, bi.quantity
         FROM bundle_items bi
         JOIN products p ON p.id = bi.component_id
         WHERE bi.bundle_id = ? AND p.active = 1
@@ -724,8 +726,8 @@ def get_bundle_components(bundle_id, persons):
     connection.close()
     return [
         {"id": r["id"], "name": r["name"], "unit": r["unit"],
-         "per_person": r["quantity_per_person"],
-         "quantity": r["quantity_per_person"] * persons}
+         "per_person": r["quantity"] / persons,
+         "quantity": r["quantity"]}
         for r in rows
     ]
 
@@ -922,8 +924,9 @@ def produkt_bearbeiten(product_id):
     GET  = Formular anzeigen (Werte aus der Datenbank)
     POST = Änderungen speichern (Werte aus dem Formular)
 
-    request.values liest BEIDES: URL-Parameter (?kategorie=5) und
-    Formularfelder. Damit funktioniert derselbe Code für GET und POST.
+    Büfetts: Ist "bundle_persons" gefüllt, ist das Produkt ein Büfett und
+    seine Bestandteile (bundle_items) lassen sich hier ändern. Leere
+    Personenzahl = kein Büfett, die Bestandteile werden gelöscht.
     """
     zurueck = request.values.get("kategorie", "").strip()
 
@@ -935,7 +938,7 @@ def produkt_bearbeiten(product_id):
     connection = connect_db()
 
     product = connection.execute(
-        "SELECT id, name, price_cents, unit, tax_rate, category_id "
+        "SELECT id, name, price_cents, unit, tax_rate, category_id, bundle_persons "
         "FROM products WHERE id = ? AND active = 1",
         (product_id,),
     ).fetchone()
@@ -948,17 +951,45 @@ def produkt_bearbeiten(product_id):
         "SELECT id, name FROM categories ORDER BY sort_order, name"
     ).fetchall()
 
+    def lade_teile():
+        """Aktuelle Bestandteile dieses Büfetts (leer bei normalen Produkten)."""
+        return connection.execute(
+            """
+            SELECT bi.component_id AS id, p.name, p.unit, bi.quantity
+            FROM bundle_items bi
+            JOIN products p ON p.id = bi.component_id
+            WHERE bi.bundle_id = ? AND p.active = 1
+            ORDER BY p.name
+            """,
+            (product_id,),
+        ).fetchall()
+
     def zeige_formular(werte, fehler_text=None):
         """
         Rendert product_edit.html. 'werte' enthält die anzuzeigenden
         Feldinhalte – beim GET die gespeicherten, beim POST die gerade
         eingegebenen (damit bei einem Fehler nichts verloren geht).
         """
+        teile = lade_teile()
+        # Auswahl "Bestandteil hinzufügen": keine Büfetts, nicht das Produkt
+        # selbst, nichts, was schon drin ist.
+        kandidaten = connection.execute(
+            """
+            SELECT id, name FROM products
+            WHERE active = 1 AND id != ? AND bundle_persons IS NULL
+              AND id NOT IN (SELECT component_id FROM bundle_items
+                             WHERE bundle_id = ?)
+            ORDER BY name
+            """,
+            (product_id, product_id),
+        ).fetchall()
         connection.close()
         return render_template(
             "product_edit.html",
             product=werte,
             categories=categories,
+            teile=teile,
+            kandidaten=kandidaten,
             selected_category=zurueck,
             fehler=fehler_text,
         )
@@ -975,6 +1006,7 @@ def produkt_bearbeiten(product_id):
     unit = request.form.get("unit", "").strip() or "Stück"
     preis_text = request.form.get("price", "").strip().replace(",", ".")
     tax_text = request.form.get("tax_rate", "").strip()
+    bundle_text = request.form.get("bundle_persons", "").strip()
     category_id = request.form.get("category_id") or None
 
     try:
@@ -990,6 +1022,7 @@ def produkt_bearbeiten(product_id):
         "price_text": preis_text.replace(".", ","),
         "tax_rate": tax_text,
         "category_id": category_id,
+        "bundle_persons": bundle_text,
     }
 
     if not name:
@@ -1006,8 +1039,15 @@ def produkt_bearbeiten(product_id):
     if tax_text not in ("7", "19"):
         return zeige_formular(werte, "Bitte einen Steuersatz wählen.")
 
+    # Personenzahl: leer = kein Büfett, sonst ganze Zahl ab 1.
+    try:
+        bundle_persons = int(bundle_text) if bundle_text else None
+        if bundle_persons is not None and bundle_persons < 1:
+            raise ValueError
+    except ValueError:
+        return zeige_formular(werte, "Die Personenzahl muss eine ganze Zahl ab 1 sein.")
+
     # Gibt es ein ANDERES Produkt mit demselben Namen?
-    # id != ? nimmt das eigene Produkt aus, sonst würde es sich selbst blockieren.
     doppelt = connection.execute(
         "SELECT id FROM products "
         "WHERE active = 1 AND lower(name) = lower(?) AND id != ?",
@@ -1016,15 +1056,88 @@ def produkt_bearbeiten(product_id):
     if doppelt:
         return zeige_formular(werte, f"„{name}“ gibt es schon.")
 
-    connection.execute(
-        """
-        UPDATE products
-        SET name = ?, price_cents = ?, unit = ?, tax_rate = ?, category_id = ?
-        WHERE id = ?
-        """,
-        (name, price_cents, unit, int(tax_text), category_id, product_id),
-    )
-    connection.commit()
+    # ---- Alles in einer Transaktion schreiben ----
+    try:
+        connection.execute(
+            """
+            UPDATE products
+            SET name = ?, price_cents = ?, unit = ?, tax_rate = ?,
+                category_id = ?, bundle_persons = ?
+            WHERE id = ?
+            """,
+            (name, price_cents, unit, int(tax_text), category_id,
+             bundle_persons, product_id),
+        )
+
+        neu_id_text = request.form.get("neu_teil_produkt", "").strip()
+
+        if bundle_persons is None:
+            # Kein Büfett (mehr): Bestandteile entfernen.
+            connection.execute(
+                "DELETE FROM bundle_items WHERE bundle_id = ?", (product_id,)
+            )
+            if neu_id_text:
+                raise ValueError(
+                    "Für Bestandteile bitte zuerst eine Personenzahl eintragen."
+                )
+        else:
+            # Bestehende Bestandteile: Menge ändern, 0 = entfernen,
+            # leer = unverändert. Feldname: teil_<produkt-id>.
+            for teil in lade_teile():
+                roh = request.form.get(f"teil_{teil['id']}", "").strip()
+                if not roh:
+                    continue
+                try:
+                    menge = int(roh)
+                except ValueError:
+                    continue
+                if menge < 0:
+                    continue
+
+                if menge == 0:
+                    connection.execute(
+                        "DELETE FROM bundle_items "
+                        "WHERE bundle_id = ? AND component_id = ?",
+                        (product_id, teil["id"]),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE bundle_items SET quantity = ? "
+                        "WHERE bundle_id = ? AND component_id = ?",
+                        (menge, product_id, teil["id"]),
+                    )
+
+            # Neuer Bestandteil aus dem Auswahlfeld.
+            if neu_id_text:
+                try:
+                    neu_id = int(neu_id_text)
+                    neu_menge = int(request.form.get("neu_teil_menge", "").strip())
+                except ValueError:
+                    raise ValueError("Bitte eine Menge für den neuen Bestandteil eingeben.")
+                if neu_menge < 1:
+                    raise ValueError("Die Menge muss mindestens 1 sein.")
+
+                gueltig = connection.execute(
+                    "SELECT 1 FROM products "
+                    "WHERE id = ? AND active = 1 AND id != ? "
+                    "AND bundle_persons IS NULL",
+                    (neu_id, product_id),
+                ).fetchone()
+                if gueltig is None:
+                    raise ValueError("Ungültiger Bestandteil.")
+
+                connection.execute(
+                    "INSERT OR REPLACE INTO bundle_items "
+                    "(bundle_id, component_id, quantity) VALUES (?, ?, ?)",
+                    (product_id, neu_id, neu_menge),
+                )
+
+        connection.commit()
+
+    except (ValueError, sqlite3.IntegrityError) as fehler:
+        connection.rollback()
+        return zeige_formular(werte, str(fehler))
+
     connection.close()
 
     return zurueck_url(hinweis=f"„{name}“ wurde gespeichert.")
@@ -1193,12 +1306,12 @@ def kunde_loeschen(customer_id):
 @app.route("/api/products")
 def product_api():
     """
-    Liefert Suchergebnisse als JSON an order.js.
-    Aufgerufen von: order.js beim Tippen ins Suchfeld (fetch).
+    Liefert Suchergebnisse als JSON an order.js und order_edit.js.
     Antwort z. B.: [{"id": 5, "name": "Ente", "price_cents": 4000, ...}]
 
     tax_rate MUSS mitgeliefert werden – ohne das Feld rechnet order.js
-    die MwSt. nicht aus und zeigt NaN an.
+    die MwSt. nicht aus und zeigt NaN an. Bei Büfetts kommen die
+    Bestandteile als "components" mit.
     """
     search_term = request.args.get("query", "").strip()
     if not search_term:
@@ -1253,8 +1366,7 @@ def order_api():
     Aufgerufen von: order.js beim Absenden des Formulars (fetch, JSON body).
 
     Alles passiert in EINER Verbindung. Entweder wird der Auftrag mit allen
-    Positionen gespeichert – oder bei einem Fehler gar nichts. Man nennt das
-    eine Transaktion: kein halb gespeicherter Auftrag ohne Positionen.
+    Positionen gespeichert – oder bei einem Fehler gar nichts.
     """
     data = request.get_json(silent=True) or {}
     customer_name = data.get("customer_name", "").strip()
@@ -1535,28 +1647,6 @@ def ansicht_pdf():
     )
 
 
-@app.route("/wochenansicht")
-def wochenansicht_alt():
-    """Alte URL (Lesezeichen): leitet auf die neue Ansicht weiter."""
-    return redirect(url_for("ansicht", modus="woche", date=request.args.get("date")))
-
-
-@app.route("/wochenansicht/pdf")
-def wochenansicht_pdf_alt():
-    """Alte PDF-URL: leitet auf die neue weiter."""
-    return redirect(url_for("ansicht_pdf", modus="woche", date=request.args.get("date")))
-
-
-@app.route("/tagesansicht")
-def tagesansicht_alt():
-    """Alte URL der Tagesansicht: gehört jetzt zur Bestellübersicht."""
-    return redirect(url_for(
-        "day_view",
-        date=request.args.get("date"),
-        hinweis=request.args.get("hinweis"),
-    ))
-
-
 @app.route("/bestellungen/<int:order_id>/loeschen", methods=["POST"])
 def delete_order(order_id):
     """
@@ -1584,7 +1674,7 @@ def order_bearbeiten(order_id):
     """
     Bestellung bearbeiten: Stammdaten, Mengen, Positionen hinzufügen/entfernen.
     Datei: order_edit.html
-    Aufgerufen von: dem ✏️-Knopf in tagesansicht.html.
+    Aufgerufen von: dem ✏️-Knopf in bestelluebersicht.html.
 
     GET  = Formular mit den gespeicherten Werten zeigen
     POST = Änderungen speichern
@@ -1613,8 +1703,6 @@ def order_bearbeiten(order_id):
         Rendert order_edit.html.
         werte      = anzuzeigende Stammdaten
         positionen = anzuzeigende Positionen
-        Beim GET kommen beide aus der Datenbank, beim Fehlerfall aus dem
-        Formular bzw. aus der unveränderten Datenbank.
         """
         connection.close()
         return render_template(
@@ -1701,21 +1789,18 @@ def order_bearbeiten(order_id):
                 )
             else:
                 # WICHTIG: unit_price_cents bleibt unangetastet.
-                # Der damals gespeicherte Preis gilt weiter, auch wenn sich
-                # der Produktpreis inzwischen geändert hat.
                 connection.execute(
                     "UPDATE order_items SET quantity = ? WHERE id = ?",
                     (menge, item["id"]),
                 )
 
         # ---- Neue Positionen aus der Produktsuche ----
-        # order_edit.js legt für jedes hinzugefügte Produkt ein Feld
-        # "neu_menge_<produkt_id>" an. Wir suchen alle solche Felder.
+        # order_edit.js legt pro hinzugefügtem Produkt ein Feld
+        # "neu_menge_<produkt_id>" an.
         for feldname, wert in list(request.form.items()):
             if not feldname.startswith("neu_menge_"):
                 continue
 
-            # Aus "neu_menge_5" die 5 herausschneiden.
             try:
                 produkt_id = int(feldname[len("neu_menge_"):])
                 menge = int(wert)
@@ -1733,9 +1818,8 @@ def order_bearbeiten(order_id):
             if produkt is None:
                 continue
 
-            # Ist das Produkt schon als NORMALE Position in dieser Bestellung?
-            # (bundle_id IS NULL: Büfett-Bestandteile zählen hier nicht.)
-            # Dann nur die Menge erhöhen und den DAMALIGEN Preis stehen lassen.
+            # Schon als NORMALE Position vorhanden? (bundle_id IS NULL:
+            # Büfett-Bestandteile zählen hier nicht.) Dann nur die Menge erhöhen.
             vorhanden = connection.execute(
                 "SELECT id FROM order_items "
                 "WHERE order_id = ? AND product_id = ? AND bundle_id IS NULL",
@@ -1759,13 +1843,12 @@ def order_bearbeiten(order_id):
                 )
 
         # ---- Bestandteile neu hinzugefügter Büfetts ----
-        # order_edit.js nennt diese Felder neu_teil_<büfett-id>_<produkt-id>.
-        # Läuft NACH den normalen Positionen, damit das Büfett schon existiert.
+        # Felder: neu_teil_<büfett-id>_<produkt-id>. Läuft NACH den normalen
+        # Positionen, damit das Büfett schon existiert.
         for feldname, wert in list(request.form.items()):
             if not feldname.startswith("neu_teil_"):
                 continue
 
-            # Aus "neu_teil_5_12" Büfett 5 und Produkt 12 herausschneiden.
             try:
                 _, _, buffet_text, produkt_text = feldname.split("_")
                 buffet_id = int(buffet_text)
@@ -1837,8 +1920,7 @@ def order_bearbeiten(order_id):
         connection.commit()
 
     except (ValueError, sqlite3.IntegrityError) as fehler:
-        # rollback() macht alle Änderungen dieser Transaktion rückgängig –
-        # kein halb gespeicherter Zustand.
+        # rollback() macht alle Änderungen dieser Transaktion rückgängig.
         connection.rollback()
 
         # Positionen neu laden, weil die Änderungen gerade verworfen wurden.
@@ -1858,7 +1940,8 @@ def order_bearbeiten(order_id):
 def lade_positionen(connection, order_id):
     """
     Positionen einer Bestellung inkl. Büfett-Zuordnung.
-    per_person = Stück pro Person, nur bei Büfett-Bestandteilen gefüllt.
+    per_person = Stück pro Person (Menge / Standard-Personenzahl des
+    Büfetts), nur bei Büfett-Bestandteilen gefüllt.
     Verwendet in: order_bearbeiten()
     """
     return connection.execute(
@@ -1866,12 +1949,13 @@ def lade_positionen(connection, order_id):
         SELECT order_items.id, order_items.product_id, order_items.bundle_id,
                order_items.quantity, order_items.unit_price_cents,
                products.name, products.unit,
-               bi.quantity_per_person AS per_person
+               1.0 * bi.quantity / bp.bundle_persons AS per_person
         FROM order_items
         JOIN products ON products.id = order_items.product_id
         LEFT JOIN bundle_items bi
                ON bi.bundle_id = order_items.bundle_id
               AND bi.component_id = order_items.product_id
+        LEFT JOIN products bp ON bp.id = order_items.bundle_id
         WHERE order_items.order_id = ?
         ORDER BY order_items.id
         """,
@@ -1889,15 +1973,10 @@ WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag",
 def order_pdf(order_id):
     """
     Erzeugt ein A5-PDF einer Bestellung und schickt es an den Browser.
-    Aufgerufen von: dem 📄-Knopf in tagesansicht.html (öffnet neuen Tab).
+    Aufgerufen von: dem 📄-Knopf in bestelluebersicht.html (öffnet neuen Tab).
 
-    Die Struktur ist immer gleich bei ReportLab:
-      1. Styles definieren (Schriftart, Größe, Ausrichtung)
-      2. buffer = BytesIO()  -> das PDF entsteht im Arbeitsspeicher
-      3. doc = SimpleDocTemplate(...)  -> Seite mit Rändern
-      4. story = Liste von Absätzen/Tabellen  -> der Inhalt
-      5. doc.build(story)  -> schreibt ins buffer
-      6. send_file(buffer) -> schickt es raus
+    Büfetts: Überschrift rechtsbündig ("Fingerfood Büfett für 15 Personen"),
+    darunter linksbündig die Bestandteile.
     """
     order, items, total_cents = get_order_details(order_id)
     if order is None:
@@ -1915,9 +1994,8 @@ def order_pdf(order_id):
                            fontSize=16, leading=20, alignment=TA_RIGHT)
     heading = ParagraphStyle("heading", parent=base, fontName="ComicSans-Bold",
                              fontSize=12, leading=16, spaceBefore=14, spaceAfter=4)
-
     bundle_style = ParagraphStyle("bundle", parent=base, fontName="ComicSans-Bold",
-                                alignment=TA_RIGHT, spaceBefore=6)
+                                  alignment=TA_RIGHT, spaceBefore=6)
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -1928,7 +2006,6 @@ def order_pdf(order_id):
     )
 
     # ---- Kopfzeile: links leer, Mitte Datum, rechts Uhrzeit + Art ----
-    # Die äußeren Spalten sind gleich breit, damit das Datum wirklich mittig sitzt.
     header = Table(
         [[
             "",
@@ -1956,7 +2033,7 @@ def order_pdf(order_id):
     if order["customer_phone"]:
         story.append(Paragraph(escape(order["customer_phone"]), base))
 
-    # NEU: Notiz. Zeilenumbrüche aus dem Textfeld werden zu <br/>.
+    # Notiz. Zeilenumbrüche aus dem Textfeld werden zu <br/>.
     if order["notes"]:
         story.append(Paragraph("Notizen", heading))
         story.append(Paragraph(escape(order["notes"]).replace("\n", "<br/>"), base))

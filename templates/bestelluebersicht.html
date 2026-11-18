@@ -10,7 +10,7 @@
 <html lang="de">
   <head>
     <meta charset="utf-8">
-    <title>Tagesansicht – Catering Manager</title>
+    <title>Bestellübersicht – Catering Manager</title>
     <link rel="stylesheet" href="/style.css">
   </head>
   <body>
@@ -32,7 +32,7 @@
         method="get": das Datum landet in der URL (/tagesansicht?date=...).
         Richtig hier, weil nichts geändert wird – nur angezeigt.
       -->
-      <form method="get" action="/tagesansicht">
+      <form method="get" action="/bestelluebersicht">
         <label for="date">Datum</label>
         <input id="date" name="date" type="date" value="{{ selected_date }}">
         <button type="submit">Anzeigen</button>
@@ -43,10 +43,10 @@
         kein JavaScript – einfache Links reichen für einen Tageswechsel.
       -->
       <p class="wochen-nav">
-        <a href="/tagesansicht?date={{ vorheriger_tag }}" title="Vorheriger Tag">
+        <a href="/bestelluebersicht?date={{ vorheriger_tag }}" title="Vorheriger Tag">
           ← Vorheriger Tag
         </a>
-        <a href="/tagesansicht?date={{ naechster_tag }}" title="Nächster Tag">
+        <a href="/bestelluebersicht?date={{ naechster_tag }}" title="Nächster Tag">
           Nächster Tag →
         </a>
       </p>
