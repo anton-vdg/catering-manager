@@ -152,10 +152,9 @@ INSERT OR IGNORE INTO products (name, price_cents, unit, tax_rate, category_id) 
 UPDATE products SET bundle_persons = 10
 WHERE name = 'Fingerfood Büfett ab 10 Personen' AND bundle_persons IS NULL;
 
--- Schritt 2: Bestandteile mit Menge für die Standard-Personenzahl.
--- INSERT OR REPLACE: wer hier eine Zahl ändert, überschreibt beim nächsten
--- Start den alten Wert in der Datenbank.
-INSERT OR REPLACE INTO bundle_items (bundle_id, component_id, quantity)
+-- Schritt 2: Bestandteile NUR einspielen, wenn das Büfett noch keine hat.
+-- Was in der App geändert wurde, wird beim Start nicht mehr überschrieben.
+INSERT INTO bundle_items (bundle_id, component_id, quantity)
 SELECT b.id, c.id, v.column2
 FROM products b
 JOIN (VALUES
@@ -169,4 +168,5 @@ JOIN (VALUES
   ('Obstplatte (für 5 oder 10 Personen)',               10)
 ) AS v
 JOIN products c ON c.name = v.column1
-WHERE b.name = 'Fingerfood Büfett ab 10 Personen';
+WHERE b.name = 'Fingerfood Büfett ab 10 Personen'
+  AND NOT EXISTS (SELECT 1 FROM bundle_items WHERE bundle_id = b.id);

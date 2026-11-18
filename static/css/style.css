@@ -80,17 +80,16 @@
      box-sizing: border-box sorgt dafür, dass das 8px-Padding INNERHALB
      der 100% bleibt und das Feld nicht rechts herausragt.
      --------------------------------------------------------------------- */
-  input[type="text"],
-  input[type="search"],
-  input[type="tel"],
-  input[type="address"],
-  input[type="date"],
-  input[type="time"],
-  textarea,
-  select {
-    width: 100%;
-    box-sizing: border-box;
-  }
+     input[type="text"],
+     input[type="search"],
+     input[type="tel"],
+     input[type="date"],
+     input[type="time"],
+     textarea,
+     select {
+       width: 100%;
+       box-sizing: border-box;
+     }
   
   /* Das Filter-Dropdown auf der Produkteseite soll kompakt bleiben. */
   .kategorie-filter select {
@@ -324,4 +323,28 @@
 .modus-umschalter a.aktiv {
   opacity: 1;
   border-bottom: 3px solid #CE1213;
+}
+
+/* Vor/Zurück-Navigation in Tages- und Ansichtsseite. */
+.wochen-nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin: 16px 0;
+}
+
+.wochen-nav a {
+  color: #CE1213;
+  text-decoration: none;
+}
+
+/* Kennzahlen unter der Navigation. */
+.wochen-summary {
+  font-weight: bold;
+  margin: 8px 0 16px;
+}
+
+/* PDF-Formular in der Bestellkarte soll wie die anderen Knöpfe sitzen. */
+.pdfformular {
+  display: block;
 }

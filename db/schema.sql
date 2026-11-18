@@ -102,7 +102,6 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL COLLATE NOCASE,
   phone TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
-  address TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   UNIQUE (name, phone)
 );

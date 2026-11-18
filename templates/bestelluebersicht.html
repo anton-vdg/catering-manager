@@ -74,8 +74,10 @@
                 {% for item in order['items'] %}
                 <li>
                   {{ item['quantity'] }} × {{ item['name'] }}
-                  {% if item['unit_price_cents'] == 0 %}
+                  {% if item['bundle_id'] %}
                     (im Büfett enthalten)
+                  {% elif item['unit_price_cents'] == 0 %}
+                    (Preis auf Anfrage)
                   {% else %}
                     ({{ '%.2f'|format(item['unit_price_cents'] / 100) }} € pro {{ item['unit'] }})
                   {% endif %}

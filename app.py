@@ -14,16 +14,15 @@ Starten:  python app.py   ->   http://127.0.0.1:5000
 # ===================================================================
 # Standardbibliothek von Python – nichts zu installieren.
 import sqlite3                      # Datenbankzugriff
-from datetime import date           # heutiges Datum für die Tagesansicht
 from io import BytesIO              # PDF im Arbeitsspeicher statt auf Platte
 from pathlib import Path            # Dateipfade unabhängig vom Betriebssystem
 from xml.sax.saxutils import escape # Sonderzeichen (<, >, &) für PDFs entschärfen
-import os
 import threading
 import time
 from datetime import date, datetime, timedelta
 import re
 import calendar
+from decimal import Decimal, ROUND_HALF_UP
 
 # Flask = das Web-Framework. Ohne Flask gäbe es keine Routen und keine Templates.
 from flask import (
@@ -46,7 +45,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, KeepTogether
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 # ===================================================================
@@ -99,16 +98,7 @@ def init_db():
     """
     db = connect_db()
 
-    # 3a) Kategorietabelle anlegen, falls sie fehlt.
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS categories (
-          id INTEGER PRIMARY KEY,
-          name TEXT NOT NULL UNIQUE,
-          sort_order INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-
-    # 3b) Existiert die products-Tabelle schon, ergänze fehlende Spalten.
+    # Existiert die products-Tabelle schon (ältere DB), ergänze fehlende Spalten.
     spalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(products)")]
     if spalten:
         if "active" not in spalten:
@@ -125,23 +115,19 @@ def init_db():
         if "bundle_persons" not in spalten:
             db.execute("ALTER TABLE products ADD COLUMN bundle_persons INTEGER")
 
-    # order_items hat eigene Spalten, deshalb eine eigene Liste.
     positionsspalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(order_items)")]
     if positionsspalten and "bundle_id" not in positionsspalten:
         db.execute("ALTER TABLE order_items ADD COLUMN bundle_id INTEGER")
 
-    # Alte bundle_items (Spalte quantity_per_person) verwerfen. Die neue
-    # Tabelle mit der Spalte quantity legt schema.sql gleich an, der Inhalt
-    # kommt danach aus produktliste.sql.
+    # Alte bundle_items (Spalte quantity_per_person) verwerfen.
     bundlespalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(bundle_items)")]
     if bundlespalten and "quantity" not in bundlespalten:
         db.execute("DROP TABLE bundle_items")
 
-    # 3c) schema.sql = Tabellenstruktur, produktliste.sql = Startinhalte.
+    # schema.sql = Tabellenstruktur (inkl. categories), produktliste.sql = Startinhalte.
     db.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
 
-    # 3d) Notizspalten nachrüsten. Steht NACH schema.sql, weil orders und
-    #     customers dann sicher existieren.
+    # Notizspalten nachrüsten (nach schema.sql, weil die Tabellen dann existieren).
     auftragsspalten = [zeile[1] for zeile in db.execute("PRAGMA table_info(orders)")]
     if "notes" not in auftragsspalten:
         db.execute("ALTER TABLE orders ADD COLUMN notes TEXT")
@@ -273,6 +259,25 @@ def euro(cents):
     """
     return f"{cents / 100:.2f}".replace(".", ",") + " €"
 
+def parse_preis(text):
+    """
+    Wandelt eine Preis-Eingabe ("4,50" oder "4.50") in Cent um.
+    Wirft ValueError mit einer Meldung für den Benutzer, wenn der Wert
+    ungültig ist. Decimal statt float: "inf", "nan" und riesige Zahlen
+    führen so nicht mehr zu einem 500er-Fehler.
+    """
+    fehler = "Bitte einen gültigen Preis eingeben, z. B. 4,50."
+    try:
+        wert = Decimal(text.strip().replace(",", "."))
+        if not wert.is_finite():
+            raise ValueError(fehler)
+        cents = int((wert * 100).to_integral_value(ROUND_HALF_UP))
+    except ArithmeticError:          # InvalidOperation, Overflow ...
+        raise ValueError(fehler)
+
+    if cents < 0:
+        raise ValueError("Der Preis darf nicht negativ sein.")
+    return cents
 
 # ===================================================================
 # 5. Lesefunktionen (werden von den Routen weiter unten aufgerufen)
@@ -404,9 +409,6 @@ def get_orders_for_day(selected_date):
     sortieren – deshalb funktioniert ORDER BY order_time.
 
     Verwendet in: day_view()
-
-    Hinweis: Pro Bestellung wird eine eigene Abfrage gemacht. Bei 20
-    Bestellungen am Tag sind das 20 Abfragen – für diesen Betrieb völlig okay.
     """
     connection = connect_db()
 
@@ -419,20 +421,21 @@ def get_orders_for_day(selected_date):
     for order_row in order_rows:
         order = dict(order_row)
 
-        # JOIN holt zu jeder Position den Produktnamen und die Einheit dazu.
+        # GEÄNDERT: bundle_id wird mitgelesen, Reihenfolge ist jetzt fest.
         item_rows = connection.execute(
             """
             SELECT products.name, products.unit,
-                   order_items.quantity, order_items.unit_price_cents
+                   order_items.quantity, order_items.unit_price_cents,
+                   order_items.bundle_id
             FROM order_items
             JOIN products ON products.id = order_items.product_id
             WHERE order_items.order_id = ?
+            ORDER BY order_items.id
             """,
             (order["id"],),
         ).fetchall()
 
         order["items"] = [dict(item) for item in item_rows]
-        # Gesamtbetrag = Menge × damals gespeicherter Preis, aufsummiert.
         order["total_cents"] = sum(
             item["quantity"] * item["unit_price_cents"] for item in item_rows
         )
@@ -494,16 +497,14 @@ def week_range(datum):
 
 def get_week_summary(montag, sonntag):
     """
-    Summiert alle Positionen einer Woche pro Produkt.
+    Summiert alle Positionen eines Zeitraums pro Produkt.
 
     montag/sonntag sind ISO-Text wie "2026-11-10", damit BETWEEN
     auf dem Textvergleich funktioniert (SQLite-Datumsspeicherung).
 
-    Verwendet in: week_view()
+    Verwendet in: ansicht()
 
-    Wichtig: SUM(quantity) summiert NUR Positionen, die es in dieser
-    Woche tatsächlich gab. Produkte, die niemand bestellt hat, tauchen
-    nicht auf – das ist gewollt, sonst wäre die Liste riesig.
+    Gibt (rows, bestellungen) zurück.
     """
     connection = connect_db()
 
@@ -525,20 +526,13 @@ def get_week_summary(montag, sonntag):
         (montag, sonntag),
     ).fetchall()
 
-    # Zusatzinfo für die Kopfzeile.
     bestellungen = connection.execute(
         "SELECT COUNT(*) FROM orders WHERE order_date BETWEEN ? AND ?",
         (montag, sonntag),
     ).fetchone()[0]
 
-    kunden = connection.execute(
-        "SELECT COUNT(DISTINCT customer_name) FROM orders "
-        "WHERE order_date BETWEEN ? AND ?",
-        (montag, sonntag),
-    ).fetchone()[0]
-
     connection.close()
-    return rows, bestellungen, kunden
+    return rows, bestellungen
 
 def get_week_positions(start, ende):
     """
@@ -817,15 +811,17 @@ def produkt_hinzufuegen():
     """
     Legt ein neues Produkt an.
     Abgeschickt von: dem Formular in produkte.html.
+
+    Gibt es schon ein "gelöschtes" (active = 0) Produkt mit genau diesem
+    Namen, wird es wieder aktiviert, statt eine neue Zeile anzulegen
+    (der Unique-Index auf dem Namen würde das sonst verhindern).
     """
     name = request.form.get("name", "").strip()
     unit = request.form.get("unit", "").strip() or "Stück"
-    preis_text = request.form.get("price", "").strip().replace(",", ".")
+    preis_text = request.form.get("price", "").strip()
     tax_text = request.form.get("tax_rate", "7").strip()
     zurueck = request.form.get("kategorie", "").strip()
 
-    # Leerer Wert im <select> kommt als "" an – daraus None machen.
-    # int() kann auch scheitern, wenn jemand am HTML manipuliert hat.
     category_id = request.form.get("category_id") or None
     try:
         category_id = int(category_id) if category_id else None
@@ -833,10 +829,6 @@ def produkt_hinzufuegen():
         category_id = None
 
     def zurueck_url(**kwargs):
-        """
-        Baut die Rücksprung-URL. Die gewählte Kategorie wird mitgenommen,
-        damit man nach dem Speichern wieder in derselben Ansicht landet.
-        """
         if zurueck:
             kwargs["kategorie"] = zurueck
         return redirect(url_for("products", **kwargs))
@@ -844,38 +836,56 @@ def produkt_hinzufuegen():
     if not name:
         return zurueck_url(fehler="Bitte einen Namen eingeben.")
 
+    # GEÄNDERT: parse_preis() statt float()
     try:
-        price_cents = round(float(preis_text) * 100)
-    except ValueError:
-        return zurueck_url(fehler="Bitte einen gültigen Preis eingeben, z. B. 4,50.")
-
-    if price_cents < 0:
-        return zurueck_url(fehler="Der Preis darf nicht negativ sein.")
+        price_cents = parse_preis(preis_text)
+    except ValueError as fehler:
+        return zurueck_url(fehler=str(fehler))
 
     if tax_text not in ("7", "19"):
         return zurueck_url(fehler="Bitte einen Steuersatz wählen.")
 
     connection = connect_db()
+    try:
+        # Doppelte aktive Namen verhindern (unabhängig von Groß-/Kleinschreibung).
+        schon_da = connection.execute(
+            "SELECT id FROM products WHERE active = 1 AND lower(name) = lower(?)",
+            (name,),
+        ).fetchone()
+        if schon_da:
+            return zurueck_url(fehler=f"„{name}“ gibt es schon.")
 
-    # Doppelte Namen verhindern. lower() macht den Vergleich
-    # unabhängig von Groß-/Kleinschreibung: "Ente" = "ente".
-    schon_da = connection.execute(
-        "SELECT id FROM products WHERE active = 1 AND lower(name) = lower(?)",
-        (name,),
-    ).fetchone()
-    if schon_da:
-        connection.close()
+        # NEU: früher gelöschtes Produkt mit exakt diesem Namen reaktivieren.
+        inaktiv = connection.execute(
+            "SELECT id FROM products WHERE active = 0 AND name = ?", (name,)
+        ).fetchone()
+
+        if inaktiv:
+            connection.execute(
+                """
+                UPDATE products
+                SET active = 1, price_cents = ?, unit = ?, tax_rate = ?,
+                    category_id = ?
+                WHERE id = ?
+                """,
+                (price_cents, unit, int(tax_text), category_id, inaktiv["id"]),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO products (name, price_cents, unit, tax_rate, category_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (name, price_cents, unit, int(tax_text), category_id),
+            )
+        connection.commit()
+
+    except sqlite3.IntegrityError:
+        # NEU: Netz unter dem Netz, falls trotzdem ein Namenskonflikt auftritt.
+        connection.rollback()
         return zurueck_url(fehler=f"„{name}“ gibt es schon.")
-
-    connection.execute(
-        """
-        INSERT INTO products (name, price_cents, unit, tax_rate, category_id)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (name, price_cents, unit, int(tax_text), category_id),
-    )
-    connection.commit()
-    connection.close()
+    finally:
+        connection.close()
 
     return zurueck_url(hinweis=f"„{name}“ wurde hinzugefügt.")
 
@@ -971,8 +981,6 @@ def produkt_bearbeiten(product_id):
         eingegebenen (damit bei einem Fehler nichts verloren geht).
         """
         teile = lade_teile()
-        # Auswahl "Bestandteil hinzufügen": keine Büfetts, nicht das Produkt
-        # selbst, nichts, was schon drin ist.
         kandidaten = connection.execute(
             """
             SELECT id, name FROM products
@@ -997,14 +1005,13 @@ def produkt_bearbeiten(product_id):
     # ---------- GET: nur anzeigen ----------
     if request.method == "GET":
         werte = dict(product)
-        # Preis als "4,50" fürs Eingabefeld vorbereiten (deutsche Schreibweise).
         werte["price_text"] = f"{product['price_cents'] / 100:.2f}".replace(".", ",")
         return zeige_formular(werte)
 
     # ---------- POST: speichern ----------
     name = request.form.get("name", "").strip()
     unit = request.form.get("unit", "").strip() or "Stück"
-    preis_text = request.form.get("price", "").strip().replace(",", ".")
+    preis_text = request.form.get("price", "").strip()
     tax_text = request.form.get("tax_rate", "").strip()
     bundle_text = request.form.get("bundle_persons", "").strip()
     category_id = request.form.get("category_id") or None
@@ -1014,7 +1021,6 @@ def produkt_bearbeiten(product_id):
     except ValueError:
         category_id = None
 
-    # Die eingegebenen Werte für ein erneutes Anzeigen des Formulars.
     werte = {
         "id": product_id,
         "name": name,
@@ -1028,18 +1034,15 @@ def produkt_bearbeiten(product_id):
     if not name:
         return zeige_formular(werte, "Bitte einen Namen eingeben.")
 
+    # GEÄNDERT: parse_preis() ersetzt float() und die Negativ-Prüfung.
     try:
-        price_cents = round(float(preis_text) * 100)
-    except ValueError:
-        return zeige_formular(werte, "Bitte einen gültigen Preis eingeben, z. B. 4,50.")
-
-    if price_cents < 0:
-        return zeige_formular(werte, "Der Preis darf nicht negativ sein.")
+        price_cents = parse_preis(preis_text)
+    except ValueError as fehler:
+        return zeige_formular(werte, str(fehler))
 
     if tax_text not in ("7", "19"):
         return zeige_formular(werte, "Bitte einen Steuersatz wählen.")
 
-    # Personenzahl: leer = kein Büfett, sonst ganze Zahl ab 1.
     try:
         bundle_persons = int(bundle_text) if bundle_text else None
         if bundle_persons is not None and bundle_persons < 1:
@@ -1047,7 +1050,6 @@ def produkt_bearbeiten(product_id):
     except ValueError:
         return zeige_formular(werte, "Die Personenzahl muss eine ganze Zahl ab 1 sein.")
 
-    # Gibt es ein ANDERES Produkt mit demselben Namen?
     doppelt = connection.execute(
         "SELECT id FROM products "
         "WHERE active = 1 AND lower(name) = lower(?) AND id != ?",
@@ -1072,7 +1074,6 @@ def produkt_bearbeiten(product_id):
         neu_id_text = request.form.get("neu_teil_produkt", "").strip()
 
         if bundle_persons is None:
-            # Kein Büfett (mehr): Bestandteile entfernen.
             connection.execute(
                 "DELETE FROM bundle_items WHERE bundle_id = ?", (product_id,)
             )
@@ -1081,8 +1082,6 @@ def produkt_bearbeiten(product_id):
                     "Für Bestandteile bitte zuerst eine Personenzahl eintragen."
                 )
         else:
-            # Bestehende Bestandteile: Menge ändern, 0 = entfernen,
-            # leer = unverändert. Feldname: teil_<produkt-id>.
             for teil in lade_teile():
                 roh = request.form.get(f"teil_{teil['id']}", "").strip()
                 if not roh:
@@ -1107,7 +1106,6 @@ def produkt_bearbeiten(product_id):
                         (menge, product_id, teil["id"]),
                     )
 
-            # Neuer Bestandteil aus dem Auswahlfeld.
             if neu_id_text:
                 try:
                     neu_id = int(neu_id_text)
@@ -1378,8 +1376,6 @@ def order_api():
     notes = data.get("notes", "").strip()
     items = data.get("items", [])
 
-    # Der Server prüft selbst. HTML-Felder mit required reichen nicht,
-    # weil man fetch auch ohne Browser aufrufen kann.
     if not customer_name or not customer_phone or not order_date \
             or not order_time or not items:
         return jsonify({
@@ -1389,13 +1385,11 @@ def order_api():
     if fulfillment_type not in {"abholung", "lieferung"}:
         return jsonify({"error": "Ungültige Art der Bestellung."}), 400
 
-    # Bei Lieferung ist die Adresse Pflicht, bei Abholung nicht.
     if fulfillment_type == "lieferung" and not delivery_address:
         return jsonify({"error": "Bei Lieferung bitte eine Lieferadresse angeben."}), 400
 
     connection = connect_db()
     try:
-        # 1) Den Auftrag speichern und seine neue ID merken.
         cursor = connection.execute(
             """
             INSERT INTO orders
@@ -1408,24 +1402,18 @@ def order_api():
         )
         order_id = cursor.lastrowid
 
-        # Welche Produkte wurden "normal" bestellt? Nur deren Bestandteile
-        # dürfen später mit Preis 0 gespeichert werden.
         normal_ids = {int(i["product_id"]) for i in items if not i.get("bundle_id")}
 
-        # 2) Die Positionen speichern.
         for item in items:
             product_id = int(item["product_id"])
             quantity = int(item["quantity"])
             if quantity < 1:
                 raise ValueError("Die Menge muss mindestens 1 sein.")
 
-            # Gehört die Position zu einem Büfett? None = normale Position.
             bundle_id = item.get("bundle_id")
             bundle_id = int(bundle_id) if bundle_id else None
 
             if bundle_id:
-                # Bestandteil eines Büfetts: Preis 0, aber nur, wenn er
-                # wirklich zu einem mitbestellten Büfett gehört.
                 gehoert_dazu = connection.execute(
                     "SELECT 1 FROM bundle_items "
                     "WHERE bundle_id = ? AND component_id = ?",
@@ -1435,9 +1423,10 @@ def order_api():
                     raise ValueError("Ungültiger Büfett-Bestandteil.")
                 price_cents = 0
             else:
-                # Preis aus der DATENBANK lesen, nicht aus dem Browser.
+                # GEÄNDERT: "AND active = 1" – gelöschte Produkte sind nicht bestellbar.
                 product = connection.execute(
-                    "SELECT price_cents FROM products WHERE id = ?", (product_id,)
+                    "SELECT price_cents FROM products WHERE id = ? AND active = 1",
+                    (product_id,),
                 ).fetchone()
                 if product is None:
                     raise ValueError("Ein ausgewähltes Produkt existiert nicht mehr.")
@@ -1454,7 +1443,6 @@ def order_api():
 
         connection.commit()
     except (KeyError, TypeError, ValueError, sqlite3.IntegrityError):
-        # rollback() macht alle Änderungen dieser Transaktion rückgängig.
         connection.rollback()
         connection.close()
         return jsonify({"error": "Ungültige Produktdaten."}), 400
@@ -1495,7 +1483,7 @@ def day_view():
 @app.route("/ansicht")
 def ansicht():
     """
-    Produktübersicht für einen Tag ODER eine Woche. Datei: ansicht.html
+    Produktübersicht für Tag, Woche, Monat oder Jahr. Datei: ansicht.html
 
     URL:  /ansicht?modus=tag&date=2026-11-12
           /ansicht?modus=woche&date=2026-11-12
@@ -1509,7 +1497,7 @@ def ansicht():
     ende = z["ende"].isoformat()
 
     # Kennzahlen (Anzahl Bestellungen, Umsatz).
-    rows, bestellungen, kunden = get_week_summary(start, ende)
+    rows, bestellungen = get_week_summary(start, ende)
     gesamt_cents = sum(row["total_cents"] for row in rows)
 
     return render_template(
@@ -1650,22 +1638,17 @@ def ansicht_pdf():
 @app.route("/bestellungen/<int:order_id>/loeschen", methods=["POST"])
 def delete_order(order_id):
     """
-    Löscht eine Bestellung samt Positionen.
-    Abgeschickt von: dem 🗑️-Knopf in tagesansicht.html.
-
-    Hier ist ein echtes DELETE richtig, weil Bestellungen keine
-    "Geschichte" für andere Tabellen sind. Ohne die Reihenfolge
-    (erst Positionen, dann Auftrag) würde der Fremdschlüssel meckern.
+    Löscht eine Bestellung. Die Positionen verschwinden automatisch mit
+    (ON DELETE CASCADE in schema.sql, PRAGMA foreign_keys = ON in connect_db()).
+    Abgeschickt von: dem 🗑️-Knopf in bestelluebersicht.html.
     """
     selected_date = request.form.get("date", date.today().isoformat())
 
     connection = connect_db()
-    connection.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
     connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
     connection.commit()
     connection.close()
 
-    # Zurück zur selben Tagesansicht, nicht zur Startseite.
     return redirect(url_for("day_view", date=selected_date))
 
 
@@ -1689,21 +1672,14 @@ def order_bearbeiten(order_id):
         connection.close()
         return redirect(url_for("day_view"))
 
-    # Bestehende Positionen mit Produktnamen und Büfett-Zuordnung.
     items = lade_positionen(connection, order_id)
 
-    # Alle sichtbaren Produkte für das Auswahlfeld "Position hinzufügen".
     products = connection.execute(
         "SELECT id, name, price_cents, unit FROM products "
         "WHERE active = 1 ORDER BY name"
     ).fetchall()
 
     def zeige_formular(werte, positionen, fehler_text=None):
-        """
-        Rendert order_edit.html.
-        werte      = anzuzeigende Stammdaten
-        positionen = anzuzeigende Positionen
-        """
         connection.close()
         return render_template(
             "order_edit.html",
@@ -1726,7 +1702,6 @@ def order_bearbeiten(order_id):
     fulfillment_type = request.form.get("fulfillment_type", "").strip()
     notes = request.form.get("notes", "").strip()
 
-    # Die eingegebenen Stammdaten – damit bei einem Fehler nichts verloren geht.
     neue_werte = {
         "id": order_id,
         "customer_name": customer_name,
@@ -1746,6 +1721,11 @@ def order_bearbeiten(order_id):
     if fulfillment_type not in {"abholung", "lieferung"}:
         return zeige_formular(neue_werte, [dict(i) for i in items],
                               "Bitte Abholung oder Lieferung wählen.")
+
+    # NEU: gleiche Regel wie in order_api().
+    if fulfillment_type == "lieferung" and not delivery_address:
+        return zeige_formular(neue_werte, [dict(i) for i in items],
+                              "Bei Lieferung bitte eine Lieferadresse angeben.")
 
     try:
         date.fromisoformat(order_date)
@@ -1767,11 +1747,9 @@ def order_bearbeiten(order_id):
         )
 
         # Bestehende Positionen: Menge ändern, 0 bedeutet "entfernen".
-        # Das Feld heißt im HTML "menge_<id>" – z. B. menge_7.
         for item in items:
             roh = request.form.get(f"menge_{item['id']}", "").strip()
 
-            # Feld geleert -> unverändert lassen (kein versehentliches Löschen).
             if not roh:
                 continue
 
@@ -1788,15 +1766,12 @@ def order_bearbeiten(order_id):
                     "DELETE FROM order_items WHERE id = ?", (item["id"],)
                 )
             else:
-                # WICHTIG: unit_price_cents bleibt unangetastet.
                 connection.execute(
                     "UPDATE order_items SET quantity = ? WHERE id = ?",
                     (menge, item["id"]),
                 )
 
         # ---- Neue Positionen aus der Produktsuche ----
-        # order_edit.js legt pro hinzugefügtem Produkt ein Feld
-        # "neu_menge_<produkt_id>" an.
         for feldname, wert in list(request.form.items()):
             if not feldname.startswith("neu_menge_"):
                 continue
@@ -1818,8 +1793,6 @@ def order_bearbeiten(order_id):
             if produkt is None:
                 continue
 
-            # Schon als NORMALE Position vorhanden? (bundle_id IS NULL:
-            # Büfett-Bestandteile zählen hier nicht.) Dann nur die Menge erhöhen.
             vorhanden = connection.execute(
                 "SELECT id FROM order_items "
                 "WHERE order_id = ? AND product_id = ? AND bundle_id IS NULL",
@@ -1832,7 +1805,6 @@ def order_bearbeiten(order_id):
                     (menge, vorhanden["id"]),
                 )
             else:
-                # Neue Position: hier gilt der HEUTIGE Preis als Snapshot.
                 connection.execute(
                     """
                     INSERT INTO order_items
@@ -1843,8 +1815,6 @@ def order_bearbeiten(order_id):
                 )
 
         # ---- Bestandteile neu hinzugefügter Büfetts ----
-        # Felder: neu_teil_<büfett-id>_<produkt-id>. Läuft NACH den normalen
-        # Positionen, damit das Büfett schon existiert.
         for feldname, wert in list(request.form.items()):
             if not feldname.startswith("neu_teil_"):
                 continue
@@ -1860,8 +1830,6 @@ def order_bearbeiten(order_id):
             if menge < 1:
                 continue
 
-            # Preis 0 nur, wenn das Produkt wirklich zu diesem Büfett gehört
-            # UND das Büfett in dieser Bestellung vorkommt.
             gehoert_dazu = connection.execute(
                 "SELECT 1 FROM bundle_items WHERE bundle_id = ? AND component_id = ?",
                 (buffet_id, produkt_id),
@@ -1895,8 +1863,8 @@ def order_bearbeiten(order_id):
                     (order_id, produkt_id, menge, buffet_id),
                 )
 
-        # Büfett auf Menge 0 gesetzt (gelöscht)? Dann dürfen seine
-        # Bestandteile nicht als Waisen in der Bestellung bleiben.
+        # Büfett auf Menge 0 gesetzt? Dann dürfen seine Bestandteile
+        # nicht als Waisen in der Bestellung bleiben.
         connection.execute(
             """
             DELETE FROM order_items
@@ -1909,7 +1877,6 @@ def order_bearbeiten(order_id):
             (order_id, order_id),
         )
 
-        # Eine Bestellung ohne Positionen ergibt keinen Sinn.
         anzahl = connection.execute(
             "SELECT COUNT(*) FROM order_items WHERE order_id = ?", (order_id,)
         ).fetchone()[0]
@@ -1920,17 +1887,12 @@ def order_bearbeiten(order_id):
         connection.commit()
 
     except (ValueError, sqlite3.IntegrityError) as fehler:
-        # rollback() macht alle Änderungen dieser Transaktion rückgängig.
         connection.rollback()
-
-        # Positionen neu laden, weil die Änderungen gerade verworfen wurden.
         items = lade_positionen(connection, order_id)
-
         return zeige_formular(neue_werte, [dict(i) for i in items], str(fehler))
 
     connection.close()
 
-    # Zur Tagesansicht des (evtl. geänderten) Datums springen.
     return redirect(url_for(
         "day_view",
         date=order_date,
