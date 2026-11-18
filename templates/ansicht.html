@@ -1,0 +1,168 @@
+<!--
+  ansicht.html – Produktübersicht für Tag, Woche, Monat oder Jahr
+  Gefüllt von der Route ansicht() in app.py.
+
+  Variablen aus Python:
+    modus          = "tag", "woche", "monat" oder "jahr"
+    selected_date  = gewähltes Datum (damit der Datumswähler es anzeigt)
+    zeitraum       = Anzeigetext, z. B. "KW 47 · 18.11.2026 – 22.11.2026",
+                     "Mittwoch, 18.11.2026", "November 2026" oder "2026"
+    kategorien     = [{name, mit_kg, produkte: [{name, unit, kg, total,
+                       positionen: [{kunde, tag, uhrzeit, anzahl,
+                                     im_buefett}]}]}]
+    bestellungen   = Anzahl Bestellungen im Zeitraum
+    gesamt_cents   = Brutto-Summe aller Positionen
+    vorherige/naechste = ISO-Datum für die Vor/Zurück-Links
+
+  Tag und Woche zeigen alle Einzelbestellungen, Monat und Jahr nur
+  die Gesamtanzahl pro Produkt.
+-->
+{% set nur_summen = modus in ['monat', 'jahr'] %}
+{% set einheit = {'tag': 'Tag', 'woche': 'Woche', 'monat': 'Monat', 'jahr': 'Jahr'}[modus] %}
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ einheit }}sansicht – Catering Manager</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Catering Manager</h1>
+      <nav>
+        <a href="/">Startseite</a>
+        <a href="/bestelluebersicht">Bestellübersicht</a>
+        <a href="/ansicht">Ansicht</a>
+        <a href="/produkte">Produkte</a>
+        <a href="/kunden">Kunden</a>
+      </nav>
+    </header>
+
+    <main>
+      <!-- Umschalter in der Überschrift. Das Datum wird beim Wechsel mitgenommen. -->
+      <h2 class="modus-umschalter">
+        <a href="/ansicht?modus=tag&date={{ selected_date }}"
+           class="{{ 'aktiv' if modus == 'tag' }}">Tag</a>
+        <a href="/ansicht?modus=woche&date={{ selected_date }}"
+           class="{{ 'aktiv' if modus == 'woche' }}">Woche</a>
+        <a href="/ansicht?modus=monat&date={{ selected_date }}"
+           class="{{ 'aktiv' if modus == 'monat' }}">Monat</a>
+        <a href="/ansicht?modus=jahr&date={{ selected_date }}"
+           class="{{ 'aktiv' if modus == 'jahr' }}">Jahr</a>
+      </h2>
+
+      <!-- Datumswähler. Das versteckte Feld behält den Modus bei. -->
+      <form method="get" action="/ansicht">
+        <input type="hidden" name="modus" value="{{ modus }}">
+        <label for="date">
+          {% if modus == 'tag' %}Datum
+          {% elif modus == 'woche' %}Woche enthält Tag
+          {% elif modus == 'monat' %}Monat enthält Tag
+          {% else %}Jahr enthält Tag{% endif %}
+        </label>
+        <input id="date" name="date" type="date" value="{{ selected_date }}">
+        <button type="submit">Anzeigen</button>
+      </form>
+
+      <!-- Vor/Zurück-Navigation und Zeitraum-Anzeige. -->
+      <p class="wochen-nav">
+        <a href="/ansicht?modus={{ modus }}&date={{ vorherige }}">
+          ← {{ 'Vorheriger Tag' if modus == 'tag'
+               else 'Vorherige Woche' if modus == 'woche'
+               else 'Vorheriger Monat' if modus == 'monat'
+               else 'Vorheriges Jahr' }}
+        </a>
+        <span>{{ zeitraum }}</span>
+        <a href="/ansicht?modus={{ modus }}&date={{ naechste }}">
+          {{ 'Nächster Tag' if modus == 'tag'
+             else 'Nächste Woche' if modus == 'woche'
+             else 'Nächster Monat' if modus == 'monat'
+             else 'Nächstes Jahr' }} →
+        </a>
+      </p>
+
+      <!-- Kennzahlen oben. -->
+      <p class="wochen-summary">
+        {{ bestellungen }} Bestellung{{ '' if bestellungen == 1 else 'en' }}
+        · Umsatz: {{ '%.2f'|format(gesamt_cents / 100) }} € (brutto)
+      </p>
+
+      <!-- PDF des angezeigten Zeitraums in neuem Tab (nur Tag und Woche). -->
+      {% if not nur_summen %}
+        <form method="get" action="/ansicht/pdf" target="_blank">
+          <input type="hidden" name="modus" value="{{ modus }}">
+          <input type="hidden" name="date" value="{{ selected_date }}">
+          <button type="submit" title="Ansicht als PDF öffnen">📄 Als PDF öffnen</button>
+        </form>
+      {% endif %}
+
+      {# Keine Bestellungen? Dann Hinweis statt Tabellen. #}
+      {% if kategorien %}
+        {% for kategorie in kategorien %}
+          <h3>{{ kategorie['name'] }}</h3>
+
+          {% if nur_summen %}
+            {# Monat/Jahr: nur Produkt und Gesamtanzahl. #}
+            <table>
+              <thead>
+                <tr>
+                  <th>Produkt</th>
+                  <th>Gesamt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in kategorie['produkte'] %}
+                  <tr>
+                    <td>{{ p['name'] }}</td>
+                    <td>{{ p['total'] }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+
+          {% else %}
+            {# Tag/Woche: Einzelbestellungen mit Summenzeile pro Produkt. #}
+            <table>
+              <thead>
+                <tr>
+                  <th>Kundenname</th>
+                  <th>Tag</th>
+                  <th>Uhrzeit</th>
+                  {% if kategorie['mit_kg'] %}<th>kg</th>{% endif %}
+                  <th>Anzahl</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in kategorie['produkte'] %}
+                  <tr class="produktzeile">
+                    <td colspan="{{ 5 if kategorie['mit_kg'] else 4 }}">
+                      {{ p['name'] }}
+                    </td>
+                  </tr>
+                  {% for pos in p['positionen'] %}
+                    <tr>
+                      <td>{{ pos['kunde'] }}</td>
+                      <td>{{ pos['tag'] }}</td>
+                      <td>{{ pos['uhrzeit'] }} Uhr</td>
+                      {% if kategorie['mit_kg'] %}<td>{{ p['kg'] }}</td>{% endif %}
+                      <td>
+                        {{ pos['anzahl'] }}
+                        {% if pos['im_buefett'] %}<small>(im Büfett)</small>{% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                  <tr class="gesamtzeile">
+                    <td colspan="{{ 4 if kategorie['mit_kg'] else 3 }}">Gesamt</td>
+                    <td>{{ p['total'] }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <p>In diesem Zeitraum gibt es noch keine Bestellungen.</p>
+      {% endif %}
+    </main>
+  </body>
+</html>

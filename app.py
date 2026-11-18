@@ -23,6 +23,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 import re
+import calendar
 
 # Flask = das Web-Framework. Ohne Flask gäbe es keine Routen und keine Templates.
 from flask import (
@@ -45,7 +46,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, KeepTogether
 
 
 # ===================================================================
@@ -575,27 +576,84 @@ def get_week_positions(start, ende):
     connection.close()
     return rows
 
-def resolve_week(datum_text):
+def resolve_ansicht(modus, datum_text):
     """
-    Wandelt den date-Parameter der URL in die Woche um.
+    Wandelt die URL-Parameter modus und date in einen Zeitraum um.
 
-    Gibt (datum, montag, start, sonntag) zurück.
-    start ist heute, wenn heute in dieser Woche liegt (vergangene Tage
-    der laufenden Woche zählen nicht mehr), sonst der Montag.
-    Bei ungültigem Datum wird heute genommen.
+    modus "tag"   -> genau dieser eine Tag
+    modus "woche" -> Montag..Sonntag; in der laufenden Woche beginnt
+                     die Auswertung erst bei heute
+    modus "monat" -> der ganze Kalendermonat, in dem datum liegt
+    modus "jahr"  -> das ganze Kalenderjahr, in dem datum liegt
+    Alles andere wird wie "woche" behandelt. Bei ungültigem Datum gilt heute.
 
-    Verwendet in: week_view(), week_pdf()
+    Monat und Jahr zählen immer den vollständigen Zeitraum (auch vergangene
+    Tage), weil sie als Statistik gedacht sind. Nur die Wochenansicht
+    blendet vergangene Tage der laufenden Woche aus.
+
+    Gibt ein Dict zurück mit: modus, datum, start, ende, vorherige,
+    naechste, zeitraum (Anzeigetext) und dateiname (fürs PDF).
+    vorherige/naechste sind jeweils ein beliebiger Tag im Nachbar-Zeitraum.
+
+    Verwendet in: ansicht(), ansicht_pdf()
     """
+    if modus not in ("tag", "woche", "monat", "jahr"):
+        modus = "woche"
     heute = date.today()
 
     try:
         datum = date.fromisoformat(datum_text)
-    except ValueError:
+    except (ValueError, TypeError):
         datum = heute
 
-    montag, sonntag = week_range(datum)
-    start = heute if montag <= heute <= sonntag else montag
-    return datum, montag, start, sonntag
+    if modus == "tag":
+        start = ende = datum
+        vorherige = datum - timedelta(days=1)
+        naechste = datum + timedelta(days=1)
+        zeitraum = f"{WEEKDAYS[datum.weekday()]}, {datum.strftime('%d.%m.%Y')}"
+        dateiname = f"Tagesansicht_{datum.isoformat()}.pdf"
+
+    elif modus == "woche":
+        montag, sonntag = week_range(datum)
+        start = heute if montag <= heute <= sonntag else montag
+        ende = sonntag
+        vorherige = montag - timedelta(days=7)
+        naechste = montag + timedelta(days=7)
+        kalenderwoche = montag.isocalendar()[1]
+        zeitraum = (f"KW {kalenderwoche} · "
+                    f"{start.strftime('%d.%m.%Y')} – {ende.strftime('%d.%m.%Y')}")
+        dateiname = f"Wochenansicht_KW{kalenderwoche}.pdf"
+
+    elif modus == "monat":
+        letzter_tag = calendar.monthrange(datum.year, datum.month)[1]
+        start = date(datum.year, datum.month, 1)
+        ende = date(datum.year, datum.month, letzter_tag)
+        vorherige = start - timedelta(days=1)   # letzter Tag des Vormonats
+        naechste = ende + timedelta(days=1)     # erster Tag des Folgemonats
+        monatsnamen = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+                       "Juli", "August", "September", "Oktober", "November",
+                       "Dezember"]
+        zeitraum = f"{monatsnamen[datum.month - 1]} {datum.year}"
+        dateiname = f"Monatsansicht_{datum.year}-{datum.month:02d}.pdf"
+
+    else:  # jahr
+        start = date(datum.year, 1, 1)
+        ende = date(datum.year, 12, 31)
+        vorherige = date(datum.year - 1, 1, 1)
+        naechste = date(datum.year + 1, 1, 1)
+        zeitraum = str(datum.year)
+        dateiname = f"Jahresansicht_{datum.year}.pdf"
+
+    return {
+        "modus": modus,
+        "datum": datum,
+        "start": start,
+        "ende": ende,
+        "vorherige": vorherige,
+        "naechste": naechste,
+        "zeitraum": zeitraum,
+        "dateiname": dateiname,
+    }
 
 
 def get_week_categories(start, ende):
@@ -1296,11 +1354,11 @@ def order_api():
 # ===================================================================
 # 9. Tagesansicht
 # ===================================================================
-@app.route("/tagesansicht")
+@app.route("/bestelluebersicht")
 def day_view():
     """
-    Alle Bestellungen eines Tages. Datei: tagesansicht.html
-    Datum kommt aus der URL:  /tagesansicht?date=2026-11-12
+    Alle Bestellungen eines Tages als Karten. Datei: bestelluebersicht.html
+    Datum kommt aus der URL:  /bestelluebersicht?date=2026-11-12
     Ohne Angabe oder bei ungültigem Datum: heute.
     """
     selected_date = request.args.get("date", date.today().isoformat())
@@ -1311,11 +1369,10 @@ def day_view():
         selected_date = date.today().isoformat()
 
     # Für die Vor/Zurück-Links: der Tag davor und danach.
-    # date.fromisoformat() ist oben schon geprüft, deshalb hier sicher.
     tag = date.fromisoformat(selected_date)
 
     return render_template(
-        "tagesansicht.html",
+        "bestelluebersicht.html",
         selected_date=selected_date,
         orders=get_orders_for_day(selected_date),
         hinweis=request.args.get("hinweis"),
@@ -1323,68 +1380,63 @@ def day_view():
         naechster_tag=(tag + timedelta(days=1)).isoformat(),
     )
 
-
-@app.route("/wochenansicht")
-def week_view():
+@app.route("/ansicht")
+def ansicht():
     """
-    Wochenansicht: pro Kategorie eine Tabelle mit allen Einzelbestellungen.
-    Datei: wochenansicht.html
+    Produktübersicht für einen Tag ODER eine Woche. Datei: ansicht.html
 
-    Datum aus der URL:  /wochenansicht?date=2026-11-12
-    Daraus wird die Woche ermittelt (Montag..Sonntag), in der es liegt.
-    Ohne Datum: aktuelle Woche.
-
-    Liegt heute in dieser Woche, beginnt die Auswertung erst bei heute
-    (siehe resolve_week).
+    URL:  /ansicht?modus=tag&date=2026-11-12
+          /ansicht?modus=woche&date=2026-11-12
+    Ohne Angaben: Wochenansicht der aktuellen Woche.
     """
-    datum, montag, start, sonntag = resolve_week(
-        request.args.get("date", date.today().isoformat())
+    z = resolve_ansicht(
+        request.args.get("modus"),
+        request.args.get("date", date.today().isoformat()),
     )
+    start = z["start"].isoformat()
+    ende = z["ende"].isoformat()
 
-    # Kennzahlen (Anzahl Bestellungen, Umsatz) wie bisher.
-    rows, bestellungen, kunden = get_week_summary(
-        start.isoformat(), sonntag.isoformat()
-    )
+    # Kennzahlen (Anzahl Bestellungen, Umsatz).
+    rows, bestellungen, kunden = get_week_summary(start, ende)
     gesamt_cents = sum(row["total_cents"] for row in rows)
 
-    kategorien = get_week_categories(start.isoformat(), sonntag.isoformat())
-
-    # Vor/Zurück-Links im Template brauchen fertige URLs.
-    vorherige = (montag - timedelta(days=7)).isoformat()
-    naechste = (montag + timedelta(days=7)).isoformat()
-
     return render_template(
-        "wochenansicht.html",
-        selected_date=datum.isoformat(),
-        montag=montag,
-        start=start,
-        sonntag=sonntag,
-        kalenderwoche=montag.isocalendar()[1],
-        kategorien=kategorien,
+        "ansicht.html",
+        modus=z["modus"],
+        selected_date=z["datum"].isoformat(),
+        zeitraum=z["zeitraum"],
+        kategorien=get_week_categories(start, ende),
         bestellungen=bestellungen,
-        kunden=kunden,
         gesamt_cents=gesamt_cents,
-        vorherige=vorherige,
-        naechste=naechste,
+        vorherige=z["vorherige"].isoformat(),
+        naechste=z["naechste"].isoformat(),
     )
 
-@app.route("/wochenansicht/pdf")
-def week_pdf():
-    """
-    Erzeugt ein A4-PDF der Wochenansicht: pro Kategorie eine eigene Seite.
-    Aufgerufen von: dem PDF-Knopf in wochenansicht.html (neuer Tab).
 
-    Der Zeitraum kommt aus denselben Funktionen wie in der Ansicht,
+@app.route("/ansicht/pdf")
+def ansicht_pdf():
+    """
+    Erzeugt ein A4-PDF der Tages- oder Wochenansicht: pro Kategorie eine
+    eigene Seite mit allen Einzelbestellungen.
+    Für Monat und Jahr gibt es kein PDF; dort geht es zurück zur Ansicht.
+
+    Aufgerufen von: dem PDF-Knopf in ansicht.html (neuer Tab).
+    Zeitraum und Inhalt kommen aus denselben Funktionen wie die Seite,
     das PDF zeigt also genau das, was auf dem Bildschirm steht.
     """
-    datum, montag, start, sonntag = resolve_week(
-        request.args.get("date", date.today().isoformat())
+    z = resolve_ansicht(
+        request.args.get("modus"),
+        request.args.get("date", date.today().isoformat()),
     )
-    kategorien = get_week_categories(start.isoformat(), sonntag.isoformat())
 
-    kalenderwoche = montag.isocalendar()[1]
-    zeitraum = (f"KW {kalenderwoche} · "
-                f"{start.strftime('%d.%m.%Y')} – {sonntag.strftime('%d.%m.%Y')}")
+    # Monat und Jahr haben keinen PDF-Export.
+    if z["modus"] in ("monat", "jahr"):
+        return redirect(url_for("ansicht", modus=z["modus"],
+                                date=z["datum"].isoformat()))
+
+    kategorien = get_week_categories(z["start"].isoformat(), z["ende"].isoformat())
+    zeitraum = z["zeitraum"]
+    art = "Tagesansicht" if z["modus"] == "tag" else "Wochenansicht"
 
     # ---- Styles ----
     base = ParagraphStyle("wbase", fontName="ComicSans", fontSize=10, leading=13)
@@ -1398,13 +1450,13 @@ def week_pdf():
         buffer, pagesize=A4,
         leftMargin=1.5 * cm, rightMargin=1.5 * cm,
         topMargin=1.5 * cm, bottomMargin=1.5 * cm,
-        title=f"Wochenansicht KW {kalenderwoche}",
+        title=f"{art} {zeitraum}",
     )
 
     story = []
 
     if not kategorien:
-        story.append(Paragraph("Wochenansicht", titel))
+        story.append(Paragraph(art, titel))
         story.append(Paragraph(escape(zeitraum), klein))
         story.append(Spacer(1, 0.5 * cm))
         story.append(Paragraph("In diesem Zeitraum gibt es keine Bestellungen.", base))
@@ -1479,8 +1531,30 @@ def week_pdf():
     return send_file(
         buffer,
         mimetype="application/pdf",
-        download_name=f"Wochenansicht_KW{kalenderwoche}.pdf",
+        download_name=z["dateiname"],
     )
+
+
+@app.route("/wochenansicht")
+def wochenansicht_alt():
+    """Alte URL (Lesezeichen): leitet auf die neue Ansicht weiter."""
+    return redirect(url_for("ansicht", modus="woche", date=request.args.get("date")))
+
+
+@app.route("/wochenansicht/pdf")
+def wochenansicht_pdf_alt():
+    """Alte PDF-URL: leitet auf die neue weiter."""
+    return redirect(url_for("ansicht_pdf", modus="woche", date=request.args.get("date")))
+
+
+@app.route("/tagesansicht")
+def tagesansicht_alt():
+    """Alte URL der Tagesansicht: gehört jetzt zur Bestellübersicht."""
+    return redirect(url_for(
+        "day_view",
+        date=request.args.get("date"),
+        hinweis=request.args.get("hinweis"),
+    ))
 
 
 @app.route("/bestellungen/<int:order_id>/loeschen", methods=["POST"])

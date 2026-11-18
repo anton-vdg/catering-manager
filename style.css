@@ -311,3 +311,17 @@
   padding: 8px;
   border-radius: 4px;
 }
+
+/* Umschalter Tages-/Wochenansicht in der Überschrift. */
+.modus-umschalter a {
+  color: #26352d;
+  text-decoration: none;
+  margin-right: 24px;
+  padding-bottom: 4px;
+  opacity: 0.45;
+}
+
+.modus-umschalter a.aktiv {
+  opacity: 1;
+  border-bottom: 3px solid #CE1213;
+}
